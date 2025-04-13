@@ -44,11 +44,22 @@ func main() {
 	for {
 		printPrompt()
 		inputBuff.readInput()
-		switch inputBuff.inputString {
-		case ".exit":
-			os.Exit(0)
-		default:
-			fmt.Println("Unrecognised command")
+
+		if inputBuff.inputString[0] == '.' {
+			switch DoMetaCommand(inputBuff.inputString) {
+			case META_COMMAND_SUCCESS:
+				continue
+			case META_COMMAND_UNRECOGNIZED_COMMAND:
+				fmt.Printf("Unrecognized command '%s'.\n", inputBuff.inputString)
+				continue
+			}
 		}
+
+		statement := &Statement{}
+		// switch statement {
+		// case condition:
+
+		// }
+
 	}
 }
