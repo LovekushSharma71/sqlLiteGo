@@ -58,11 +58,13 @@ func main() {
 		statement := &Statement{}
 		switch statement.PrepareStatement(*inputBuff) {
 		case PREPARE_SUCCESS:
-			continue
+			fmt.Println("prepare success")
 		case PREPARE_UNRECOGNIZED_STATEMENT:
 			fmt.Println("Invalid statement")
-
+			continue
 		}
+		statement.ExecuteStatement()
+		fmt.Println("Executed")
 
 	}
 }

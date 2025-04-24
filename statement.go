@@ -36,13 +36,21 @@ func DoMetaCommand(inp string) int {
 }
 
 func (s *Statement) PrepareStatement(inpBuff InputBuffer) int {
-	switch strings.ToLower(inpBuff.inputString[0:6]) {
-	case "insert":
+	if inpBuff.inputLenght >= 6 && strings.ToLower(inpBuff.inputString[0:6]) == "insert" {
 		s.Type = STATEMENT_INSERT
-	case "select":
+	} else if inpBuff.inputLenght >= 6 && strings.ToLower(inpBuff.inputString[0:6]) == "select" {
 		s.Type = STATEMENT_SELECT
-	default:
+	} else {
 		return PREPARE_UNRECOGNIZED_STATEMENT
 	}
 	return PREPARE_SUCCESS
+}
+
+func (s *Statement) ExecuteStatement() {
+	switch s.Type {
+	case STATEMENT_INSERT:
+		fmt.Println("Insert execution routine")
+	case STATEMENT_SELECT:
+		fmt.Println("Select execution routine")
+	}
 }
