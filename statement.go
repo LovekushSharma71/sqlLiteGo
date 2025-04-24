@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -17,9 +18,14 @@ const (
 )
 
 type StatementType int
-
+type Row struct {
+	Id       int
+	Username string
+	email    string
+}
 type Statement struct {
-	Type StatementType
+	Type        StatementType
+	RowToInsert Row
 }
 
 const (
@@ -38,6 +44,16 @@ func DoMetaCommand(inp string) int {
 func (s *Statement) PrepareStatement(inpBuff InputBuffer) int {
 	if inpBuff.inputLenght >= 6 && strings.ToLower(inpBuff.inputString[0:6]) == "insert" {
 		s.Type = STATEMENT_INSERT
+		args := strings.Split(inpBuff.inputString, " ")
+		id, err := strconv.Atoi(args[1])
+		if err != nil {
+			fmt.Println("Error id should be integer\nusage: insert id username email")
+			return PREPARE_UNRECOGNIZED_STATEMENT
+		}
+		s.RowToInsert.Id = id
+		s.RowToInsert.Username = args[2]
+		s.RowToInsert.email = args[3]
+
 	} else if inpBuff.inputLenght >= 6 && strings.ToLower(inpBuff.inputString[0:6]) == "select" {
 		s.Type = STATEMENT_SELECT
 	} else {
