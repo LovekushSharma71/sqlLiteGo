@@ -41,6 +41,7 @@ func (inp *InputBuffer) readInput() {
 
 func main() {
 	var inputBuff *InputBuffer = initInpBuff()
+	var table *Table = NewTable()
 	for {
 		printPrompt()
 		inputBuff.readInput()
@@ -59,12 +60,20 @@ func main() {
 		switch statement.PrepareStatement(*inputBuff) {
 		case PREPARE_SUCCESS:
 			fmt.Println("prepare success")
+		case PREPARE_SYNTAX_ERROR:
+			fmt.Println("Syntax error: Could not parse statement")
+			continue
 		case PREPARE_UNRECOGNIZED_STATEMENT:
 			fmt.Println("Invalid statement")
 			continue
 		}
-		statement.ExecuteStatement()
-		fmt.Println("Executed")
-
+		switch statement.ExecuteStatement(table) {
+		case EXECUTE_SUCCESS:
+			fmt.Println("Executed")
+		case EXECUTE_TABLE_FULL:
+			fmt.Println("Error: Table full")
+		case EXECUTE_INVALID_STATEMENT:
+			fmt.Println("Error: Invalid statement")
+		}
 	}
 }
