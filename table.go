@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"unsafe"
 )
@@ -47,7 +46,15 @@ func NewTable() *Table {
 func SerializeRow(src *Row) ([]byte, error) {
 
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, BINARY_ORDER, src)
+	err := binary.Write(buf, BINARY_ORDER, &src.Id)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, BINARY_ORDER, &src.Username)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(buf, BINARY_ORDER, &src.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +65,15 @@ func DeserializeRow(src []byte) (*Row, error) {
 
 	var rowData *Row = &Row{}
 	reader := bytes.NewReader(src)
-	err := binary.Read(reader, BINARY_ORDER, rowData)
+	err := binary.Read(reader, BINARY_ORDER, &rowData.Id)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(reader, BINARY_ORDER, &rowData.Username)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(reader, BINARY_ORDER, &rowData.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +84,7 @@ func (t *Table) GetRowFromTable(rowNum uint32) ([]byte, error) {
 
 	pageNum := rowNum / uint32(ROWS_PER_PAGE)
 	if pageNum > TABLE_MAX_PAGES {
-		return nil, errors.New(fmt.Sprintf("Max page number exceeded: (Max pages allowed) %d < current page %d", TABLE_MAX_PAGES, pageNum))
+		return nil, fmt.Errorf("Max page number exceeded: (Max pages allowed) %d < current page %d", TABLE_MAX_PAGES, pageNum)
 	}
 	page := t.Pages[pageNum]
 	row := rowNum % uint32(ROWS_PER_PAGE)

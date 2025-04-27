@@ -59,7 +59,7 @@ func main() {
 		statement := &Statement{}
 		switch statement.PrepareStatement(*inputBuff) {
 		case PREPARE_SUCCESS:
-			fmt.Println("prepare success")
+			// fmt.Println("prepare success")
 		case PREPARE_SYNTAX_ERROR:
 			fmt.Println("Syntax error: Could not parse statement")
 			continue
