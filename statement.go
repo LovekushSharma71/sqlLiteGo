@@ -37,9 +37,9 @@ const (
 	META_COMMAND_UNRECOGNIZED_COMMAND
 )
 
-func DoMetaCommand(inp string) int {
+func DoMetaCommand(inp string, table *Table) int {
 	if inp == ".exit" {
-		fmt.Println("")
+		table.SyncTable2File()
 		os.Exit(0)
 	}
 	return META_COMMAND_UNRECOGNIZED_COMMAND
@@ -96,7 +96,7 @@ func (s *Statement) ExecuteInsert(table *Table) int {
 	}
 	pageNum := table.NumRows / uint32(ROWS_PER_PAGE)
 	rowNum := table.NumRows % uint32(ROWS_PER_PAGE)
-	table.Pages[pageNum][rowNum] = data
+	table.Pager.Pages[pageNum][rowNum] = data
 	table.NumRows += 1
 	return EXECUTE_SUCCESS
 }

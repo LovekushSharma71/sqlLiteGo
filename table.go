@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"os"
 	"unsafe"
 )
 
@@ -21,6 +23,7 @@ const PAGE_SIZE = 4096
 const TABLE_MAX_PAGES = 10
 const ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE
 const TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES
+const FILE_PATH = "data"
 
 var BINARY_ORDER binary.ByteOrder = binary.LittleEndian
 
@@ -31,16 +34,98 @@ type Row struct {
 	Email    [255]byte
 }
 
+type Pager struct {
+	FData os.File
+	FInfo os.FileInfo
+	Pages [TABLE_MAX_PAGES][ROWS_PER_PAGE][]byte
+}
+
 type Table struct {
 	NumRows uint32
-	Pages   [TABLE_MAX_PAGES][ROWS_PER_PAGE][]byte
+	Pager   *Pager
 }
 
 func NewTable() *Table {
+
+	file, err := os.OpenFile(FILE_PATH, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		fmt.Errorf("Error opening a file:%+v\n", err)
+		return nil
+	}
+
+	finfo, err := file.Stat()
+	if err != nil {
+		fmt.Errorf("Error getting a file info:%+v\n", err)
+		return nil
+	}
+
+	if finfo.Size() > int64(TABLE_MAX_PAGES*TABLE_MAX_ROWS*ROW_SIZE) {
+		fmt.Errorf("Table size limit exceeded\n")
+		return nil
+	}
+
 	table := &Table{
-		Pages: [TABLE_MAX_PAGES][ROWS_PER_PAGE][]byte{},
+		Pager: &Pager{
+			FData: *file,
+			FInfo: finfo,
+			Pages: [TABLE_MAX_PAGES][ROWS_PER_PAGE][]byte{},
+		},
 	}
 	return table
+}
+
+func (t *Table) SyncFile2Table() error {
+
+	var fileOffset int64 = 0
+	for i := 0; i < TABLE_MAX_PAGES; i++ {
+		for j := 0; j < ROWS_PER_PAGE; j++ {
+
+			b := make([]byte, ROW_SIZE)
+			n, err := t.Pager.FData.ReadAt(b, fileOffset)
+
+			fmt.Println("Read", n, "bytes at offset", fileOffset, "Error:", err)
+
+			if err != io.EOF && err != nil {
+				fmt.Println("Error reading file:", err)
+				return err
+			}
+			if n > 0 {
+				t.Pager.Pages[i][j] = b[:n] // Store only the bytes read
+				t.NumRows++
+				fileOffset += int64(ROW_SIZE)
+			} else {
+				fmt.Println("Read 0 bytes, assuming EOF")
+				return err
+			}
+			if err == io.EOF {
+				fmt.Println("Reached EOF")
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (t *Table) SyncTable2File() {
+
+	var offset int64 = 0
+	for i := 0; i < TABLE_MAX_PAGES; i++ {
+		for j := 0; j < ROWS_PER_PAGE; j++ {
+
+			if len(t.Pager.Pages[i][j]) > 0 {
+
+				_, err := t.Pager.FData.WriteAt(t.Pager.Pages[i][j], offset)
+				if err != nil {
+					fmt.Errorf("Error while write:%v \n", err.Error())
+					return
+				}
+				offset += int64(ROW_SIZE)
+			} else {
+				return
+			}
+
+		}
+	}
 }
 
 func SerializeRow(src *Row) ([]byte, error) {
@@ -84,9 +169,9 @@ func (t *Table) GetRowFromTable(rowNum uint32) ([]byte, error) {
 
 	pageNum := rowNum / uint32(ROWS_PER_PAGE)
 	if pageNum > TABLE_MAX_PAGES {
-		return nil, fmt.Errorf("Max page number exceeded: (Max pages allowed) %d < current page %d", TABLE_MAX_PAGES, pageNum)
+		return nil, fmt.Errorf("Max page number exceeded: (Max pages allowed) %d < current page %d\n", TABLE_MAX_PAGES, pageNum)
 	}
-	page := t.Pages[pageNum]
+	page := t.Pager.Pages[pageNum]
 	row := rowNum % uint32(ROWS_PER_PAGE)
 	return page[row], nil
 }

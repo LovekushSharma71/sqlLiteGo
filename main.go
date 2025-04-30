@@ -42,12 +42,16 @@ func (inp *InputBuffer) readInput() {
 func main() {
 	var inputBuff *InputBuffer = initInpBuff()
 	var table *Table = NewTable()
+	err := table.SyncFile2Table()
+	if err != nil {
+		os.Exit(0)
+	}
 	for {
 		printPrompt()
 		inputBuff.readInput()
 
 		if inputBuff.inputString[0] == '.' {
-			switch DoMetaCommand(inputBuff.inputString) {
+			switch DoMetaCommand(inputBuff.inputString, table) {
 			case META_COMMAND_SUCCESS:
 				continue
 			case META_COMMAND_UNRECOGNIZED_COMMAND:
