@@ -1,6 +1,8 @@
 package main
 
-import "fmt"
+import (
+	"db/LinearTable"
+)
 
 // import (
 // 	"bufio"
@@ -85,54 +87,23 @@ import "fmt"
 // }
 
 func main() {
-	node := []Node{
-		{1, [255]byte{'1'}},
-		{3, [255]byte{'1'}},
-		{6, [255]byte{'1'}},
-		{9, [255]byte{'1'}},
-		{14, [255]byte{'1'}},
-		{16, [255]byte{'1'}},
-	}
-	fmt.Println(Search(node, -1), Search(node, 2), Search(node, 4), Search(node, 7), Search(node, 15), Search(node, 17))
-	table := InitDisk()
-	pge := Page{
-		IsLeaf:  true,
-		NodeCnt: 2,
-		Nodes:   [3]Node{{1, [255]byte{'v', 'a', 'l', '1'}}, {2, [255]byte{'v', 'a', 'l', '2'}}},
-		// Nodes:    [3]Node{{1, "[255]byte{'v', 'a', 'l', '1'}"}, {2, "[255]byte{'v', 'a', 'l', '2'}"}},
-		Children: [4]PageId{-1, -1, -1},
-	}
-	if err := table.wrtPage(0, &pge); err != nil {
-		fmt.Println("error in write")
-		panic(err)
-	}
-	pge = Page{
-		IsLeaf:  true,
-		NodeCnt: 2,
-		Nodes:   [3]Node{{3, [255]byte{'v', 'a', 'l', '1'}}, {4, [255]byte{'v', 'a', 'l', '2'}}},
-		// Nodes:    [3]Node{{1, "[255]byte{'v', 'a', 'l', '1'}"}, {2, "[255]byte{'v', 'a', 'l', '2'}"}},
-		Children: [4]PageId{-1, -1, -1},
-	}
-	if err := table.wrtPage(1, &pge); err != nil {
-		fmt.Println("error in write")
-		panic(err)
-	}
-	page, err := table.getPage(0)
-	if err != nil {
-		fmt.Println("error in read")
-		panic(err)
-	}
-	fmt.Printf("%v %v %v %v\n", page.IsLeaf, page.NodeCnt, page.Children, page.Nodes)
-	page, err = table.getPage(1)
-	if err != nil {
-		fmt.Println("error in read")
-		panic(err)
-	}
-	fmt.Printf("%v %v %v %v\n", page.IsLeaf, page.NodeCnt, page.Children, page.Nodes)
-	root, err := table.getPage(0)
+
+	// dsk, err := dm.InitDiskManager("test")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer dsk.Close()
+
+	t, err := LinearTable.InitLinearTable("test")
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(table.Select(root, 1))
-	fmt.Println(table.Select(root, 5))
+	defer t.Close()
+
+	t.Insert(1, "val1")
+	t.Select()
+
+	t.Insert(2, "val2")
+	t.Select()
+
 }

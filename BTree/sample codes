@@ -1,0 +1,4117 @@
+// gemini code sample //
+/*
+package main
+
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"os"
+)
+
+// Define the order of the B-tree. A higher order means more keys per node.
+const BTREE_ORDER = 4 // For simplicity, a small order
+
+// Define the size of a page in the file (simulating disk blocks)
+const PAGE_SIZE = 4096 // 4KB
+
+// Node represents a B-tree node in memory
+type Node struct {
+	IsLeaf   bool
+	NumKeys  int
+	Keys     []int    // Assuming integer keys for simplicity
+	Values   []string // Assuming string values for simplicity
+	Children []int    // Page numbers of child nodes
+	PageNum  int      // The page number where this node is stored in the file
+}
+
+// Database represents the database file and its state
+type Database struct {
+	File     *os.File
+	RootPage int // The page number of the root node
+	NextPage int // The next available page number in the file
+}
+
+// NewDatabase opens or creates a database file
+func NewDatabase(filename string) (*Database, error) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, err
+	}
+
+	db := &Database{
+		File: file,
+	}
+
+	// Read metadata (like root page and next available page) from a dedicated location (e.g., the first page)
+	// For this simple example, we'll just assume a new file starts with an empty root.
+	// In a real DB, you'd serialize/deserialize this metadata.
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if fileInfo.Size() == 0 {
+		// New file, create an initial root node
+		rootNode := &Node{IsLeaf: true, PageNum: 0}
+		if err := db.writeNode(rootNode); err != nil {
+			return nil, fmt.Errorf("failed to write initial root node: %w", err)
+		}
+		db.RootPage = 0
+		db.NextPage = 1
+	} else {
+		// Existing file, read metadata
+		// In a real implementation, read rootPage and nextPage from the file
+		db.RootPage = 0 // Assume root is always at page 0 for this simple example
+		// You would need to read the actual nextPage from the file metadata
+		fileInfo, err := file.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get file info: %w", err)
+		}
+		db.NextPage = int(fileInfo.Size()) / PAGE_SIZE // Simple estimation
+	}
+
+	return db, nil
+}
+
+// Close the database file
+func (db *Database) Close() error {
+	// In a real DB, you'd serialize and save metadata before closing
+	return db.File.Close()
+}
+
+// readNode reads a node from a specific page number in the file
+func (db *Database) readNode(pageNum int) (*Node, error) {
+	offset := int64(pageNum) * PAGE_SIZE
+	pageData := make([]byte, PAGE_SIZE)
+
+	_, err := db.File.ReadAt(pageData, offset)
+	if err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("attempted to read beyond end of file at page %d", pageNum)
+		}
+		return nil, fmt.Errorf("failed to read page %d: %w", pageNum, err)
+	}
+
+	node, err := deserializeNode(pageData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize node from page %d: %w", pageNum, err)
+	}
+	node.PageNum = pageNum // Set the page number after deserializing
+	return node, nil
+}
+
+// writeNode writes a node to its assigned page number in the file
+func (db *Database) writeNode(node *Node) error {
+	offset := int64(node.PageNum) * PAGE_SIZE
+	pageData, err := serializeNode(node)
+	if err != nil {
+		return fmt.Errorf("failed to serialize node for page %d: %w", node.PageNum, err)
+	}
+
+	if len(pageData) > PAGE_SIZE {
+		return fmt.Errorf("serialized node size (%d) exceeds page size (%d) for page %d", len(pageData), PAGE_SIZE, node.PageNum)
+	}
+
+	// Pad the data to fill the page size
+	paddedData := make([]byte, PAGE_SIZE)
+	copy(paddedData, pageData)
+
+	_, err = db.File.WriteAt(paddedData, offset)
+	if err != nil {
+		return fmt.Errorf("failed to write page %d: %w", node.PageNum, err)
+	}
+	return nil
+}
+
+// allocatePage allocates a new page in the file and returns its page number
+func (db *Database) allocatePage() (int, error) {
+	pageNum := db.NextPage
+	db.NextPage++
+	// In a real DB, you'd need to persist db.NextPage
+	return pageNum, nil
+}
+
+// serializeNode converts a Node struct into a byte slice for storage
+func serializeNode(node *Node) ([]byte, error) {
+	var buf bytes.Buffer
+
+	// Write IsLeaf (1 byte: 1 for true, 0 for false)
+	if node.IsLeaf {
+		buf.WriteByte(1)
+	} else {
+		buf.WriteByte(0)
+	}
+
+	// Write NumKeys (int)
+	if err := binary.Write(&buf, binary.LittleEndian, int32(node.NumKeys)); err != nil {
+		return nil, fmt.Errorf("failed to serialize NumKeys: %w", err)
+	}
+
+	// Write Keys ([]int)
+	if err := binary.Write(&buf, binary.LittleEndian, int32(len(node.Keys))); err != nil {
+		return nil, fmt.Errorf("failed to serialize number of keys: %w", err)
+	}
+	for _, key := range node.Keys {
+		if err := binary.Write(&buf, binary.LittleEndian, int32(key)); err != nil {
+			return nil, fmt.Errorf("failed to serialize key: %w", err)
+		}
+	}
+
+	// Write Values ([]string)
+	if err := binary.Write(&buf, binary.LittleEndian, int32(len(node.Values))); err != nil {
+		return nil, fmt.Errorf("failed to serialize number of values: %w", err)
+	}
+	for _, value := range node.Values {
+		// Write length of the string first
+		if err := binary.Write(&buf, binary.LittleEndian, int32(len(value))); err != nil {
+			return nil, fmt.Errorf("failed to serialize value length: %w", err)
+		}
+		// Write the string bytes
+		buf.WriteString(value)
+	}
+
+	// Write Children ([]int)
+	if err := binary.Write(&buf, binary.LittleEndian, int32(len(node.Children))); err != nil {
+		return nil, fmt.Errorf("failed to serialize number of children: %w", err)
+	}
+	for _, childPageNum := range node.Children {
+		if err := binary.Write(&buf, binary.LittleEndian, int32(childPageNum)); err != nil {
+			return nil, fmt.Errorf("failed to serialize child page number: %w", err)
+		}
+	}
+
+	// Note: We don't serialize PageNum as it's determined by its position in the file
+
+	return buf.Bytes(), nil
+}
+
+// deserializeNode converts a byte slice back into a Node struct
+func deserializeNode(data []byte) (*Node, error) {
+	buf := bytes.NewReader(data)
+	node := &Node{}
+
+	// Read IsLeaf
+	isLeafByte, err := buf.ReadByte()
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize IsLeaf: %w", err)
+	}
+	node.IsLeaf = isLeafByte == 1
+
+	// Read NumKeys
+	var numKeys int32
+	if err := binary.Read(buf, binary.LittleEndian, &numKeys); err != nil {
+		return nil, fmt.Errorf("failed to deserialize NumKeys: %w", err)
+	}
+	node.NumKeys = int(numKeys)
+
+	// Read Keys
+	var numKeysActual int32
+	if err := binary.Read(buf, binary.LittleEndian, &numKeysActual); err != nil {
+		return nil, fmt.Errorf("failed to deserialize number of keys: %w", err)
+	}
+	node.Keys = make([]int, numKeysActual)
+	for i := 0; i < int(numKeysActual); i++ {
+		var key int32
+		if err := binary.Read(buf, binary.LittleEndian, &key); err != nil {
+			return nil, fmt.Errorf("failed to deserialize key: %w", err)
+		}
+		node.Keys[i] = int(key)
+	}
+
+	// Read Values
+	var numValues int32
+	if err := binary.Read(buf, binary.LittleEndian, &numValues); err != nil {
+		return nil, fmt.Errorf("failed to deserialize number of values: %w", err)
+	}
+	node.Values = make([]string, numValues)
+	for i := 0; i < int(numValues); i++ {
+		var valueLen int32
+		if err := binary.Read(buf, binary.LittleEndian, &valueLen); err != nil {
+			return nil, fmt.Errorf("failed to deserialize value length: %w", err)
+		}
+		valueBytes := make([]byte, valueLen)
+		if _, err := buf.Read(valueBytes); err != nil {
+			return nil, fmt.Errorf("failed to deserialize value bytes: %w", err)
+		}
+		node.Values[i] = string(valueBytes)
+	}
+
+	// Read Children
+	var numChildren int32
+	if err := binary.Read(buf, binary.LittleEndian, &numChildren); err != nil {
+		return nil, fmt.Errorf("failed to deserialize number of children: %w", err)
+	}
+	node.Children = make([]int, numChildren)
+	for i := 0; i < int(numChildren); i++ {
+		var childPageNum int32
+		if err := binary.Read(buf, binary.LittleEndian, &childPageNum); err != nil {
+			return nil, fmt.Errorf("failed to deserialize child page number: %w", err)
+		}
+		node.Children[i] = int(childPageNum)
+	}
+
+	return node, nil
+}
+
+// FindKey finds the index of the key in the node's keys
+// Returns the index and a boolean indicating if the key was found
+func (n *Node) FindKey(key int) (int, bool) {
+	// In a real B-tree, you'd use binary search
+	for i, k := range n.Keys {
+		if k == key {
+			return i, true
+		}
+		if k > key {
+			return i, false // Key should be in the left child
+		}
+	}
+	return n.NumKeys, false // Key should be in the rightmost child
+}
+
+// Insert inserts a key-value pair into the B-tree
+func (db *Database) Insert(key int, value string) error {
+	// This is a highly simplified insert. A real B-tree insert involves
+	// traversing the tree, finding the correct leaf node, inserting the key/value,
+	// and splitting nodes if they become full, propagating splits up the tree.
+
+	root, err := db.readNode(db.RootPage)
+	if err != nil {
+		return fmt.Errorf("failed to read root node for insert: %w", err)
+	}
+
+	// For simplicity, let's only handle insertion into the root if it's a leaf
+	if !root.IsLeaf {
+		return fmt.Errorf("insert into non-leaf root not implemented in this simple example")
+	}
+
+	// Find the correct position to insert in the leaf node
+	insertIndex, _ := root.FindKey(key)
+
+	// Check if key already exists (simple check for this example)
+	if insertIndex < root.NumKeys && root.Keys[insertIndex] == key {
+		return fmt.Errorf("key %d already exists", key)
+	}
+
+	// Insert the key and value (simplified, assumes space is available)
+	// In a real B-tree, you'd handle node splitting if it's full
+	newKeys := make([]int, root.NumKeys+1)
+	newValues := make([]string, root.NumKeys+1)
+	copy(newKeys[:insertIndex], root.Keys[:insertIndex])
+	copy(newValues[:insertIndex], root.Values[:insertIndex])
+	newKeys[insertIndex] = key
+	newValues[insertIndex] = value
+	copy(newKeys[insertIndex+1:], root.Keys[insertIndex:])
+	copy(newValues[insertIndex+1:], root.Values[insertIndex:])
+
+	root.Keys = newKeys
+	root.Values = newValues
+	root.NumKeys++
+
+	// Write the updated root node back to the file
+	if err := db.writeNode(root); err != nil {
+		return fmt.Errorf("failed to write updated root node after insert: %w", err)
+	}
+
+	return nil
+}
+
+// Select retrieves the value for a given key
+func (db *Database) Select(key int) (string, error) {
+	// This is a simplified select. A real B-tree select involves
+	// traversing the tree from the root, following the appropriate child pointers
+	// based on the key comparison, until a leaf node is reached.
+
+	currentNodePage := db.RootPage
+	for {
+		currentNode, err := db.readNode(currentNodePage)
+		if err != nil {
+			return "", fmt.Errorf("failed to read node %d during select: %w", currentNodePage, err)
+		}
+
+		index, found := currentNode.FindKey(key)
+
+		if found {
+			return currentNode.Values[index], nil
+		}
+
+		if currentNode.IsLeaf {
+			return "", fmt.Errorf("key %d not found", key)
+		}
+
+		// Move to the appropriate child node
+		currentNodePage = currentNode.Children[index]
+	}
+}
+
+// Delete removes a key-value pair from the B-tree
+func (db *Database) Delete(key int) error {
+	// This is a highly simplified delete. A real B-tree delete is complex
+	// and involves finding the key, removing it from a leaf node,
+	// handling underflow by merging or redistributing keys with sibling nodes,
+	// and potentially reducing the height of the tree.
+
+	root, err := db.readNode(db.RootPage)
+	if err != nil {
+		return fmt.Errorf("failed to read root node for delete: %w", err)
+	}
+
+	// For simplicity, let's only handle deletion from the root if it's a leaf
+	if !root.IsLeaf {
+		return fmt.Errorf("delete from non-leaf root not implemented in this simple example")
+	}
+
+	index, found := root.FindKey(key)
+
+	if !found {
+		return fmt.Errorf("key %d not found for deletion", key)
+	}
+
+	// Delete the key and value (simplified, assumes no underflow handling)
+	newKeys := make([]int, root.NumKeys-1)
+	newValues := make([]string, root.NumKeys-1)
+	copy(newKeys[:index], root.Keys[:index])
+	copy(newValues[:index], root.Values[:index])
+	copy(newKeys[index:], root.Keys[index+1:])
+	copy(newValues[index:], root.Values[index+1:])
+
+	root.Keys = newKeys
+	root.Values = newValues
+	root.NumKeys--
+
+	// Write the updated root node back to the file
+	if err := db.writeNode(root); err != nil {
+		return fmt.Errorf("failed to write updated root node after delete: %w", err)
+	}
+
+	return nil
+}
+
+func main() {
+	db, err := NewDatabase("my_database.db")
+	if err != nil {
+		fmt.Println("Error creating/opening database:", err)
+		return
+	}
+	defer db.Close()
+
+	// --- Example Usage ---
+
+	// Insert
+	err = db.Insert(10, "value10")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+	err = db.Insert(20, "value20")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+	err = db.Insert(5, "value5")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+	err = db.Insert(1, "value1")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+	err = db.Insert(2, "value2")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+	err = db.Insert(15, "value15")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+
+	// Select
+	value, err := db.Select(10)
+	if err != nil {
+		fmt.Println("Select error:", err)
+	} else {
+		fmt.Println("Select key 10:", value)
+	}
+
+	value, err = db.Select(1)
+	if err != nil {
+		fmt.Println("Select error:", err)
+	} else {
+		fmt.Println("Select key 1:", value)
+	}
+
+	value, err = db.Select(20)
+	if err != nil {
+		fmt.Println("Select error:", err)
+	} else {
+		fmt.Println("Select key 20:", value)
+	}
+
+	value, err = db.Select(25) // Key not found
+	if err != nil {
+		fmt.Println("Select error:", err)
+	} else {
+		fmt.Println("Select key 25:", value)
+	}
+
+	// Delete
+	err = db.Delete(10)
+	if err != nil {
+		fmt.Println("Delete error:", err)
+	} else {
+		fmt.Println("Deleted key 10")
+	}
+
+	// Select after delete
+	value, err = db.Select(10)
+	if err != nil {
+		fmt.Println("Select after delete error:", err) // Should show "key 10 not found"
+	} else {
+		fmt.Println("Select after delete key 10:", value)
+	}
+
+	// Insert again
+	err = db.Insert(10, "new_value10")
+	if err != nil {
+		fmt.Println("Insert error:", err)
+	}
+
+	// Select after re-insert
+	value, err = db.Select(10)
+	if err != nil {
+		fmt.Println("Select after re-insert error:", err)
+	} else {
+		fmt.Println("Select after re-insert key 10:", value)
+	}
+}
+
+*/
+
+// gemini pro 1
+
+// package main
+
+// import (
+// 	"bytes"
+// 	"encoding/binary"
+// 	"errors"
+// 	"fmt"
+// 	"os"
+// 	// "sort" // sort.Search could be used in findKeyIndex for larger nodes, but linear scan is fine here.
+// )
+
+// // Constants
+// const (
+// 	// PageSize defines the fixed size of a node block in the file.
+// 	// Needs to be large enough to hold header + keys + values + children offsets.
+// 	// Choose a value like 4096, a common disk block size.
+// 	pageSize = 4096
+// 	// Order (t) of the B-Tree. Max keys = 2t-1, Min keys = t-1 (except root).
+// 	// Max children = 2t, Min children = t.
+// 	// Calculation based on int64 keys/values/offsets: t=85 allows ~169 keys.
+// 	// Let's use a smaller 't' for easier testing/demonstration.
+// 	order = 5 // Max keys = 9, Min keys = 4
+// 	// headerSize defines the size of the file header.
+// 	headerSize = 64 // Room for root offset, order, next free offset etc.
+// )
+
+// // Errors
+// var (
+// 	ErrNotFound      = errors.New("key not found")
+// 	ErrKeyExists     = errors.New("key already exists")
+// 	ErrInvalidOffset = errors.New("invalid node offset")
+// )
+
+// // --- Data Structures ---
+
+// // Header stores metadata about the B-Tree file
+// type Header struct {
+// 	RootOffset     int64 // Offset of the root node page in the file
+// 	Order          int32 // The order 't' of the tree
+// 	NextFreeOffset int64 // Offset for allocating the next new node page
+// 	// Add other metadata if needed
+// }
+
+// // Node represents a B-Tree node (either leaf or internal)
+// type Node struct {
+// 	Offset   int64    // The offset of this node in the file
+// 	IsLeaf   bool     // True if this node is a leaf
+// 	NumKeys  int      // Current number of keys in the node
+// 	Keys     []int64  // Keys stored in the node (size 2*order - 1)
+// 	Values   []int64  // Values associated with keys (size 2*order - 1)
+// 	Children []int64  // File offsets of child nodes (size 2*order)
+// 	file     *os.File // Reference to the file for read/write
+// 	tree     *BTree   // Reference back to the tree for context
+// }
+
+// // BTree represents the persistent B-Tree
+// type BTree struct {
+// 	file   *os.File
+// 	Header Header
+// 	// Add caches or other runtime structures if needed
+// }
+
+// // --- Persistence Functions ---
+
+// // newNode creates an empty in-memory node structure
+// func newNode(t *BTree, isLeaf bool) *Node {
+// 	return &Node{
+// 		Offset:   -1, // Not yet persisted
+// 		IsLeaf:   isLeaf,
+// 		NumKeys:  0,
+// 		Keys:     make([]int64, 2*order-1),
+// 		Values:   make([]int64, 2*order-1), // Allocate even for internal nodes
+// 		Children: make([]int64, 2*order),
+// 		tree:     t,
+// 		file:     t.file,
+// 	}
+// }
+
+// // writeHeader writes the BTree header to the start of the file
+// func (t *BTree) writeHeader() error {
+// 	buf := new(bytes.Buffer)
+// 	err := binary.Write(buf, binary.LittleEndian, t.Header)
+// 	if err != nil {
+// 		return fmt.Errorf("error encoding header: %w", err)
+// 	}
+// 	paddedBuf := make([]byte, headerSize)
+// 	copy(paddedBuf, buf.Bytes()) // Ensure fixed size write
+
+// 	_, err = t.file.WriteAt(paddedBuf, 0)
+// 	if err != nil {
+// 		return fmt.Errorf("error writing header to file: %w", err)
+// 	}
+// 	return t.file.Sync() // Ensure header is flushed for critical updates
+// }
+
+// // readHeader reads the BTree header from the start of the file
+// func (t *BTree) readHeader() error {
+// 	buf := make([]byte, headerSize)
+// 	_, err := t.file.ReadAt(buf, 0)
+// 	if err != nil {
+// 		// Check specifically for empty file case
+// 		fi, statErr := t.file.Stat()
+// 		if statErr == nil && fi.Size() == 0 {
+// 			return errors.New("empty file, header not found")
+// 		}
+// 		// Check for unexpected EOF or other errors
+// 		if err == errors.New("EOF") || err.Error() == "EOF" {
+// 			// If file isn't empty, EOF here might indicate corruption or size mismatch
+// 			if fi != nil && fi.Size() > 0 && fi.Size() < headerSize {
+// 				return fmt.Errorf("error reading header: file size %d is less than header size %d", fi.Size(), headerSize)
+// 			}
+// 			return errors.New("header read failed with EOF") // Or more specific error
+// 		}
+// 		return fmt.Errorf("error reading header from file: %w", err)
+// 	}
+
+// 	reader := bytes.NewReader(buf)
+// 	err = binary.Read(reader, binary.LittleEndian, &t.Header)
+// 	if err != nil {
+// 		return fmt.Errorf("error decoding header: %w", err)
+// 	}
+// 	// Basic validation
+// 	if t.Header.Order != 0 && t.Header.Order != int32(order) { // Allow 0 only if file was truly empty before
+// 		return fmt.Errorf("mismatched order in file header (%d) and constant (%d)", t.Header.Order, order)
+// 	}
+// 	if t.Header.RootOffset < 0 && t.Header.RootOffset != -1 { // Allow -1 for initial state before root created
+// 		return fmt.Errorf("invalid root offset %d in header", t.Header.RootOffset)
+// 	}
+// 	if t.Header.NextFreeOffset < int64(headerSize) && t.Header.NextFreeOffset != 0 { // Allow 0 for initial state
+// 		// Check alignment if headerSize is multiple of pageSize
+// 		if headerSize%pageSize == 0 && t.Header.NextFreeOffset < int64(headerSize) {
+// 			return fmt.Errorf("invalid nextFreeOffset %d < headerSize %d", t.Header.NextFreeOffset, headerSize)
+// 		}
+// 		// Check alignment if headerSize is not multiple of pageSize
+// 		alignedStart := ((int64(headerSize) / int64(pageSize)) + 1) * int64(pageSize)
+// 		if headerSize%pageSize != 0 && t.Header.NextFreeOffset < alignedStart {
+// 			return fmt.Errorf("invalid nextFreeOffset %d < first aligned offset %d", t.Header.NextFreeOffset, alignedStart)
+// 		}
+// 	}
+
+// 	return nil
+// }
+
+// // serializeNode converts a Node struct into a byte slice for writing
+// func (n *Node) serialize() ([]byte, error) {
+// 	buf := new(bytes.Buffer)
+// 	var isLeafByte byte = 0
+// 	if n.IsLeaf {
+// 		isLeafByte = 1
+// 	}
+
+// 	// Write fields in order
+// 	binary.Write(buf, binary.LittleEndian, isLeafByte)
+// 	binary.Write(buf, binary.LittleEndian, int32(n.NumKeys))
+// 	binary.Write(buf, binary.LittleEndian, n.Keys)     // Fixed size slice write
+// 	binary.Write(buf, binary.LittleEndian, n.Values)   // Fixed size slice write
+// 	binary.Write(buf, binary.LittleEndian, n.Children) // Fixed size slice write
+
+// 	// Pad to pageSize
+// 	serializedData := buf.Bytes()
+// 	if len(serializedData) > pageSize {
+// 		// This should not happen if 'order' calculation is correct relative to pageSize
+// 		return nil, fmt.Errorf("node data exceeds pageSize (%d > %d). Check 'order' calculation", len(serializedData), pageSize)
+// 	}
+// 	paddedData := make([]byte, pageSize)
+// 	copy(paddedData, serializedData)
+
+// 	return paddedData, nil
+// }
+
+// // deserializeNode converts a byte slice from the file into a Node struct
+// func deserializeNode(data []byte, t *BTree, offset int64) (*Node, error) {
+// 	if len(data) != pageSize {
+// 		return nil, fmt.Errorf("invalid data size for deserialization: %d != %d", len(data), pageSize)
+// 	}
+// 	// Create a new node structure to populate
+// 	n := &Node{
+// 		Offset:   offset,
+// 		IsLeaf:   false, // Will be overwritten
+// 		NumKeys:  0,     // Will be overwritten
+// 		Keys:     make([]int64, 2*order-1),
+// 		Values:   make([]int64, 2*order-1),
+// 		Children: make([]int64, 2*order),
+// 		tree:     t,
+// 		file:     t.file,
+// 	}
+
+// 	reader := bytes.NewReader(data)
+// 	var isLeafByte byte
+// 	var numKeysInt32 int32
+
+// 	// Read fields in the same order they were written
+// 	if err := binary.Read(reader, binary.LittleEndian, &isLeafByte); err != nil {
+// 		return nil, fmt.Errorf("failed reading isLeaf: %w", err)
+// 	}
+// 	if err := binary.Read(reader, binary.LittleEndian, &numKeysInt32); err != nil {
+// 		return nil, fmt.Errorf("failed reading numKeys: %w", err)
+// 	}
+// 	if err := binary.Read(reader, binary.LittleEndian, n.Keys); err != nil {
+// 		return nil, fmt.Errorf("failed reading keys: %w", err)
+// 	}
+// 	if err := binary.Read(reader, binary.LittleEndian, n.Values); err != nil {
+// 		return nil, fmt.Errorf("failed reading values: %w", err)
+// 	}
+// 	if err := binary.Read(reader, binary.LittleEndian, n.Children); err != nil {
+// 		return nil, fmt.Errorf("failed reading children: %w", err)
+// 	}
+
+// 	n.IsLeaf = (isLeafByte == 1)
+// 	n.NumKeys = int(numKeysInt32)
+
+// 	// Basic validation on read data
+// 	if n.NumKeys < 0 || n.NumKeys > 2*order-1 {
+// 		return nil, fmt.Errorf("invalid NumKeys (%d) read from node at offset %d", n.NumKeys, offset)
+// 	}
+// 	// A non-root node must have at least t-1 keys (unless it's also the root)
+// 	// A non-root leaf node must have at least t-1 keys
+// 	// A non-root internal node must have at least t-1 keys (and t children)
+// 	// We can't easily check the root condition here, but check basic bounds.
+// 	// This check is complex to do perfectly without context, skip detailed check for now.
+
+// 	return n, nil
+// }
+
+// // calculateFirstNodeOffset determines the correct starting offset for the first node page
+// func calculateFirstNodeOffset() int64 {
+// 	if headerSize == 0 {
+// 		return 0
+// 	} // No header
+// 	if headerSize >= pageSize {
+// 		// If header is larger or equal to page size, align to next page boundary
+// 		return ((int64(headerSize) + int64(pageSize) - 1) / int64(pageSize)) * int64(pageSize)
+// 	} else {
+// 		// Header is smaller than a page, first node starts immediately after header
+// 		// unless page alignment dictates otherwise
+// 		if headerSize%pageSize == 0 { // Should not happen if headerSize < PageSize but check anyway
+// 			return int64(headerSize)
+// 		} else {
+// 			// Align to the start of the page containing the end of the header
+// 			// OR align to the start of the *next* page if header fills most of page 0
+// 			// Simpler: Just align to the next full page boundary after header ends.
+// 			return ((int64(headerSize) / int64(pageSize)) + 1) * int64(pageSize)
+// 			// Example: pageSize=4k, headerSize=64. (64/4096 + 1)*4096 = 4096.
+// 			// Example: pageSize=4k, headerSize=4096. (4096/4096 + 1)*4096 = 8192. NO, should be 4096
+// 			// Let's rethink alignment: First node starts AT or AFTER headerSize.
+// 			// It must start at a multiple of pageSize.
+// 			startOffset := int64(headerSize)
+// 			if startOffset%int64(pageSize) != 0 {
+// 				startOffset = ((startOffset / int64(pageSize)) + 1) * int64(pageSize)
+// 			}
+// 			return startOffset
+
+// 		}
+// 	}
+// }
+
+// // readNode reads a node from the file at the given offset
+// func (t *BTree) readNode(offset int64) (*Node, error) {
+// 	firstPossibleOffset := calculateFirstNodeOffset()
+// 	if offset < firstPossibleOffset || offset%int64(pageSize) != 0 {
+// 		return nil, fmt.Errorf("%w: offset %d is before first node offset %d or not page-aligned (pageSize %d)", ErrInvalidOffset, offset, firstPossibleOffset, pageSize)
+// 	}
+// 	// Check against NextFreeOffset to catch reads beyond allocated space
+// 	if offset >= t.Header.NextFreeOffset && t.Header.NextFreeOffset > 0 { // Allow read if NextFreeOffset is uninitialized (0) maybe? No, should be initialized.
+// 		return nil, fmt.Errorf("%w: attempt to read offset %d >= nextFreeOffset %d", ErrInvalidOffset, offset, t.Header.NextFreeOffset)
+// 	}
+
+// 	data := make([]byte, pageSize)
+// 	_, err := t.file.ReadAt(data, offset)
+// 	if err != nil {
+// 		// Check for EOF specifically on read attempt
+// 		if err.Error() == "EOF" || errors.Is(err, errors.New("EOF")) { // Simple check for EOF string
+// 			fi, statErr := t.file.Stat()
+// 			if statErr == nil {
+// 				// If EOF occurred but offset is within file size, indicates short read/corruption
+// 				if offset+int64(pageSize) <= fi.Size() {
+// 					return nil, fmt.Errorf("node read at offset %d failed: unexpected EOF within expected file bounds (size %d): %w", offset, fi.Size(), err)
+// 				}
+// 			}
+// 			// Otherwise, EOF likely means trying to read past the actual end of the file
+// 			return nil, fmt.Errorf("node read at offset %d failed: EOF reached (file might be truncated or offset invalid): %w", offset, err)
+// 		}
+// 		return nil, fmt.Errorf("failed to read node data at offset %d: %w", offset, err)
+// 	}
+
+// 	node, err := deserializeNode(data, t, offset)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to deserialize node read from offset %d: %w", offset, err)
+// 	}
+// 	return node, nil
+// }
+
+// // writeNode writes a node to the file at its offset
+// func (n *Node) writeNode() error {
+// 	firstPossibleOffset := calculateFirstNodeOffset()
+// 	if n.Offset < firstPossibleOffset || n.Offset%int64(pageSize) != 0 {
+// 		return fmt.Errorf("%w: attempt to write node to invalid offset %d (first possible: %d, pageSize: %d)", ErrInvalidOffset, n.Offset, firstPossibleOffset, pageSize)
+// 	}
+// 	// Optional: Check if offset is within allocated range
+// 	if n.Offset >= n.tree.Header.NextFreeOffset {
+// 		// This implies allocating and writing in separate steps might be safer,
+// 		// or that NextFreeOffset should be updated *before* writeNode is called for new nodes.
+// 		// Allow writing to the *current* nextFreeOffset if allocating, but not beyond.
+// 		// Let's assume allocateNode handles NextFreeOffset correctly.
+// 		// Re-checking here adds safety but might be redundant.
+// 		// Consider if allocateNode should return a *Node structure with offset set.
+// 	}
+
+// 	data, err := n.serialize()
+// 	if err != nil {
+// 		return fmt.Errorf("failed to serialize node for offset %d: %w", n.Offset, err)
+// 	}
+
+// 	_, err = n.file.WriteAt(data, n.Offset)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to write node data to offset %d: %w", n.Offset, err)
+// 	}
+// 	// Consider fsync here for durability guarantees, but it severely impacts performance.
+// 	// return n.file.Sync()
+// 	return nil
+// }
+
+// // allocateNode reserves space for a new node and returns its offset
+// func (t *BTree) allocateNode() (int64, error) {
+// 	offset := t.Header.NextFreeOffset
+// 	// Basic check before allocation attempt
+// 	if offset < 0 || offset%int64(pageSize) != 0 {
+// 		firstPossible := calculateFirstNodeOffset()
+// 		// If NextFreeOffset is invalid, try to reset it? Risky. Error out.
+// 		if offset < firstPossible {
+// 			return -1, fmt.Errorf("cannot allocate node, NextFreeOffset %d is invalid (before first possible offset %d)", offset, firstPossible)
+// 		}
+// 		if offset%int64(pageSize) != 0 {
+// 			return -1, fmt.Errorf("cannot allocate node, NextFreeOffset %d is not page-aligned", offset)
+// 		}
+// 	}
+
+// 	t.Header.NextFreeOffset += int64(pageSize) // Increment for the next allocation
+
+// 	// Persist the updated NextFreeOffset in the header *immediately*
+// 	// This is crucial for consistency, though not fully crash-proof without WAL.
+// 	err := t.writeHeader()
+// 	if err != nil {
+// 		// Attempt to revert in-memory state if header write fails?
+// 		t.Header.NextFreeOffset -= int64(pageSize) // Revert in-memory counter
+// 		return -1, fmt.Errorf("failed to update header after incrementing nextFreeOffset for offset %d: %w", offset, err)
+// 	}
+
+// 	// Optional: Pre-write blank data to the allocated space to actually extend the file
+// 	// This can help prevent issues if the program crashes before the node is written.
+// 	// blankNodeData := make([]byte, pageSize)
+// 	// _, err = t.file.WriteAt(blankNodeData, offset)
+// 	// if err != nil {
+// 	//      // If blanking fails, the allocation is problematic. Header is already updated... complex state.
+// 	//      // Maybe try to revert header update? Even more complex. Best effort: return error.
+// 	//     return -1, fmt.Errorf("failed to blank allocated node space at offset %d after header update: %w", offset, err)
+// 	// }
+// 	// err = t.file.Sync() // Sync after blanking if you want to be sure file is extended.
+
+// 	return offset, nil
+// }
+
+// // --- B-Tree Core Logic ---
+
+// // NewBTree creates or opens a B-Tree backed by the given file
+// func NewBTree(filename string) (*BTree, error) {
+// 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to open file %s: %w", filename, err)
+// 	}
+
+// 	t := &BTree{
+// 		file: file,
+// 		// Header initialized below
+// 	}
+
+// 	fileInfo, err := file.Stat()
+// 	if err != nil {
+// 		file.Close()
+// 		return nil, fmt.Errorf("failed to get file info for %s: %w", filename, err)
+// 	}
+
+// 	firstNodeOffset := calculateFirstNodeOffset()
+
+// 	if fileInfo.Size() == 0 || fileInfo.Size() < int64(headerSize) {
+// 		// New file or file too small for header: Initialize
+// 		fmt.Println("Initializing new B-Tree file or reconstructing header...")
+// 		t.Header.Order = int32(order)
+// 		t.Header.RootOffset = -1                  // Indicate no root yet
+// 		t.Header.NextFreeOffset = firstNodeOffset // First node starts here
+
+// 		// Write initial header (with no root)
+// 		if err := t.writeHeader(); err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to write initial header: %w", err)
+// 		}
+// 		fmt.Printf("Initial header written. NextFreeOffset set to %d\n", t.Header.NextFreeOffset)
+
+// 		// Allocate space for the root node (this also updates header's NextFreeOffset)
+// 		rootOffset, err := t.allocateNode()
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to allocate initial root node space: %w", err)
+// 		}
+// 		if rootOffset != firstNodeOffset {
+// 			// Sanity check failed
+// 			file.Close()
+// 			return nil, fmt.Errorf("internal error: allocated root offset %d != calculated first node offset %d", rootOffset, firstNodeOffset)
+// 		}
+
+// 		// Create the root node (leaf, empty)
+// 		root := newNode(t, true) // Initially, the root is a leaf
+// 		root.Offset = rootOffset
+// 		err = root.writeNode() // Write the empty root node to its allocated space
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to write initial root node: %w", err)
+// 		}
+
+// 		// Update header with the actual root offset and write again
+// 		t.Header.RootOffset = rootOffset
+// 		err = t.writeHeader()
+// 		if err != nil {
+// 			// Critical: File might be inconsistent (allocated/written root, but header points nowhere)
+// 			file.Close()
+// 			return nil, fmt.Errorf("CRITICAL: failed to write final header with root offset %d: %w", rootOffset, err)
+// 		}
+// 		fmt.Printf("New B-Tree created. Root at %d, Next free now at %d\n", t.Header.RootOffset, t.Header.NextFreeOffset)
+
+// 	} else {
+// 		// Existing file: Read header
+// 		fmt.Println("Opening existing B-Tree file...")
+// 		err = t.readHeader()
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to read or validate header from %s: %w", filename, err)
+// 		}
+// 		// Sanity check the read header
+// 		if t.Header.RootOffset < 0 && t.Header.RootOffset != -1 {
+// 			file.Close()
+// 			return nil, fmt.Errorf("existing file header contains invalid root offset %d", t.Header.RootOffset)
+// 		}
+// 		if t.Header.RootOffset > 0 && (t.Header.RootOffset < firstNodeOffset || t.Header.RootOffset%int64(pageSize) != 0) {
+// 			file.Close()
+// 			return nil, fmt.Errorf("existing file header contains misaligned or invalid root offset %d (first possible: %d)", t.Header.RootOffset, firstNodeOffset)
+// 		}
+// 		if t.Header.NextFreeOffset <= t.Header.RootOffset || t.Header.NextFreeOffset%int64(pageSize) != 0 {
+// 			if t.Header.RootOffset != -1 { // Allow NextFreeOffset == firstNodeOffset if root hasn't been set? No, should be set.
+// 				file.Close()
+// 				return nil, fmt.Errorf("existing file header contains invalid nextFreeOffset %d (root: %d, first: %d)", t.Header.NextFreeOffset, t.Header.RootOffset, firstNodeOffset)
+// 			}
+// 		}
+// 		if t.Header.RootOffset == -1 && fileInfo.Size() >= firstNodeOffset+pageSize {
+// 			// Header indicates no root, but file looks large enough to have one. Potential corruption.
+// 			fmt.Printf("Warning: Header indicates no root, but file size (%d) suggests nodes might exist.\n", fileInfo.Size())
+// 			// Proceed cautiously, or perhaps error out? For now, proceed.
+// 		}
+
+// 		fmt.Printf("Opened B-Tree. Order: %d, Root at: %d, Next free at: %d\n", t.Header.Order, t.Header.RootOffset, t.Header.NextFreeOffset)
+// 	}
+
+// 	return t, nil
+// }
+
+// // Close closes the B-Tree file
+// func (t *BTree) Close() error {
+// 	// Potentially flush caches or write final metadata here if needed.
+// 	if t.file != nil {
+// 		fmt.Println("Closing B-Tree file.")
+// 		// Ensure header is up-to-date on close. Optional, but good practice.
+// 		// err := t.writeHeader()
+// 		// if err != nil {
+// 		//     fmt.Printf("Warning: failed to write header on close: %v\n", err)
+// 		//     // Still attempt to close the file
+// 		//     closeErr := t.file.Close()
+// 		//     if closeErr != nil { return fmt.Errorf("header write failed (%v) and close failed (%v)", err, closeErr)}
+// 		//     return err // Return the header write error
+// 		// }
+// 		return t.file.Close()
+// 	}
+// 	return nil
+// }
+
+// // Search finds the value for a given key
+// func (t *BTree) Search(key int64) (int64, error) {
+// 	if t.Header.RootOffset <= 0 {
+// 		if t.Header.RootOffset == -1 { // Explicitly check for uninitialized root
+// 			return 0, errors.New("cannot search, tree root is not initialized")
+// 		}
+// 		return 0, ErrNotFound // Root offset is invalid or tree is empty after deletions led to empty root handling
+// 	}
+// 	root, err := t.readNode(t.Header.RootOffset)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("search failed: could not read root node at offset %d: %w", t.Header.RootOffset, err)
+// 	}
+// 	return root.searchKey(key)
+// }
+
+// // searchKey is a recursive helper for searching within a node's subtree
+// // *** THIS FUNCTION IS FIXED ***
+// func (n *Node) searchKey(key int64) (int64, error) {
+// 	// Find the first index 'i' where Keys[i] >= key
+// 	i := 0
+// 	// Use linear scan (or sort.Search for larger nodes)
+// 	for i < n.NumKeys && key > n.Keys[i] {
+// 		i++
+// 	}
+
+// 	// Check if the key is found at index 'i' in the current node
+// 	if i < n.NumKeys && key == n.Keys[i] {
+// 		// Key found! Return the associated value directly.
+// 		// This works correctly for both leaf and internal nodes
+// 		// assuming values in internal nodes are valid results.
+// 		return n.Values[i], nil
+// 	}
+
+// 	// If we reach here, the key was not found in the current node's Keys array.
+
+// 	// If this is a leaf node, the key doesn't exist in the subtree rooted here.
+// 	if n.IsLeaf {
+// 		return 0, ErrNotFound
+// 	}
+
+// 	// If this is an internal node, we need to descend into the correct child subtree.
+// 	// The child to follow is at index 'i' (n.Children[i]), which corresponds to
+// 	// the subtree containing keys less than Keys[i] (or all keys if i==NumKeys).
+// 	childOffset := n.Children[i]
+// 	if childOffset <= 0 {
+// 		// Invalid child pointer indicates corruption or a bug
+// 		return 0, fmt.Errorf("internal search error: node %d has invalid child offset %d at index %d", n.Offset, childOffset, i)
+// 	}
+
+// 	// Read the child node and recurse the search
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("search error: failed reading child node %d (from parent %d index %d): %w", childOffset, n.Offset, i, err)
+// 	}
+// 	return child.searchKey(key) // Recursive call
+// }
+
+// // Insert adds a key-value pair to the B-Tree
+// func (t *BTree) Insert(key, value int64) error {
+// 	if t.Header.RootOffset <= 0 {
+// 		return errors.New("cannot insert, tree root is not initialized or invalid")
+// 	}
+
+// 	root, err := t.readNode(t.Header.RootOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("insert failed: could not read root node at offset %d: %w", t.Header.RootOffset, err)
+// 	}
+
+// 	// If root is full, it needs to be split before insertion can proceed.
+// 	if root.NumKeys == 2*order-1 {
+// 		// 1. Allocate memory for a new root node. It will be internal.
+// 		newRoot := newNode(t, false) // New root is initially empty and internal
+// 		newRootOffset, err := t.allocateNode()
+// 		if err != nil {
+// 			return fmt.Errorf("insert failed during root split: could not allocate space for new root: %w", err)
+// 		}
+// 		newRoot.Offset = newRootOffset
+
+// 		// 2. Set the old root as the first child of the new root.
+// 		newRoot.Children[0] = root.Offset
+
+// 		// 3. Update the BTree's header to point to the new root offset *before* splitting.
+// 		//    This makes the operation slightly safer; if split fails, root points to new empty node.
+// 		oldRootOffset := t.Header.RootOffset
+// 		t.Header.RootOffset = newRootOffset
+// 		if err := t.writeHeader(); err != nil {
+// 			// Attempt to revert header? Risky. Return critical error.
+// 			t.Header.RootOffset = oldRootOffset // Revert in-memory only
+// 			return fmt.Errorf("CRITICAL insert error: failed to update header to new root offset %d before split: %w", newRootOffset, err)
+// 		}
+
+// 		// 4. Split the old root (which is the first child of the new root).
+// 		//    The middle key of the old root will move up into the new root.
+// 		err = newRoot.splitChild(0, root) // Split child at index 0 (the old full root)
+// 		if err != nil {
+// 			// Even if split fails, the header points to the new root. Tree state is complex.
+// 			return fmt.Errorf("insert failed during root split: splitChild call failed: %w", err)
+// 		}
+// 		// splitChild writes the newRoot, the modified old root (child), and the newly created sibling node.
+
+// 		// 5. Now newRoot has one key and two children. Determine which child to insert into.
+// 		// Re-read newRoot state after split might be safer, but splitChild should update it in memory.
+// 		if key < newRoot.Keys[0] {
+// 			// Descend into the first child (the original root, now modified)
+// 			childToInsertIn, readErr := t.readNode(newRoot.Children[0])
+// 			if readErr != nil {
+// 				return fmt.Errorf("insert failed after root split: could not read left child %d: %w", newRoot.Children[0], readErr)
+// 			}
+// 			return childToInsertIn.insertNonFull(key, value)
+// 		} else if key > newRoot.Keys[0] {
+// 			// Descend into the second child (the new sibling created during split)
+// 			childToInsertIn, readErr := t.readNode(newRoot.Children[1])
+// 			if readErr != nil {
+// 				return fmt.Errorf("insert failed after root split: could not read right child %d: %w", newRoot.Children[1], readErr)
+// 			}
+// 			return childToInsertIn.insertNonFull(key, value)
+// 		} else {
+// 			// Key matches the key that moved up to the new root. Handle as duplicate.
+// 			return fmt.Errorf("%w: key %d conflicts with key moved to new root during split", ErrKeyExists, key)
+// 		}
+
+// 	} else {
+// 		// Root is not full, insert directly starting from the root.
+// 		return root.insertNonFull(key, value)
+// 	}
+// }
+
+// // insertNonFull inserts a key-value pair into a non-full node 'n'
+// func (n *Node) insertNonFull(key, value int64) error {
+// 	i := n.NumKeys - 1 // Start checking from the rightmost key
+
+// 	if n.IsLeaf {
+// 		// Find the correct position for the new key in the leaf.
+// 		// Also check for duplicates during this scan.
+// 		for i >= 0 && key < n.Keys[i] {
+// 			n.Keys[i+1] = n.Keys[i]
+// 			n.Values[i+1] = n.Values[i]
+// 			i--
+// 		}
+
+// 		// After the loop, 'i' is the index of the key just before the insertion point, or -1.
+// 		// Check if the key at 'i' (if i >= 0) is a duplicate.
+// 		if i >= 0 && key == n.Keys[i] {
+// 			return fmt.Errorf("%w: key %d already exists in leaf node %d", ErrKeyExists, key, n.Offset)
+// 		}
+
+// 		// Check if the key at i+1 (the insertion spot) is a duplicate (only needed if loop didn't run, i.e., inserting at end)
+// 		// This check is slightly redundant if the above check works correctly. Let's remove it for clarity.
+// 		// if i+1 < n.NumKeys && key == n.Keys[i+1] { // Check only needed if key > all existing keys
+// 		// 	return fmt.Errorf("%w: key %d already exists (at end) in leaf node %d", ErrKeyExists, key, n.Offset)
+// 		// }
+
+// 		// Insert the new key and value at index i+1
+// 		n.Keys[i+1] = key
+// 		n.Values[i+1] = value
+// 		n.NumKeys++
+
+// 		// Write the updated leaf node back to disk
+// 		return n.writeNode()
+
+// 	} else { // Internal node
+// 		// Find the child index 'i' to descend into.
+// 		for i >= 0 && key < n.Keys[i] {
+// 			i--
+// 		}
+// 		// Check for duplicate key in the internal node itself *before* descending.
+// 		if i >= 0 && key == n.Keys[i] {
+// 			return fmt.Errorf("%w: key %d already exists in internal node %d", ErrKeyExists, key, n.Offset)
+// 		}
+
+// 		i++ // Increment 'i' to get the index of the child subtree to follow.
+
+// 		// Read the child node we need to descend into.
+// 		childOffset := n.Children[i]
+// 		if childOffset <= 0 {
+// 			return fmt.Errorf("internal insert error: node %d has invalid child offset %d at index %d", n.Offset, childOffset, i)
+// 		}
+// 		child, err := n.tree.readNode(childOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("insert error: failed reading child node %d (from parent %d index %d): %w", childOffset, n.Offset, i, err)
+// 		}
+
+// 		// If the child node is full, split it before descending.
+// 		if child.NumKeys == 2*order-1 {
+// 			err = n.splitChild(i, child) // This splits child 'i', moves middle key up to 'n'.
+// 			if err != nil {
+// 				return fmt.Errorf("insert error during child split: %w", err)
+// 			}
+// 			// After splitting child 'i', parent 'n' has one more key (the middle key from the split child)
+// 			// and one more child pointer. The original child 'i' is now smaller, and a new child exists at 'i+1'.
+// 			// We need to decide which of these two children to descend into based on the key 'k'.
+// 			// Compare 'key' with the key that just moved up into the parent at index 'i'.
+// 			if key > n.Keys[i] {
+// 				i++ // Key belongs in the new right child (at index i+1).
+// 			} else if key == n.Keys[i] {
+// 				// Key matches the key that moved up. Treat as duplicate.
+// 				return fmt.Errorf("%w: key %d conflicts with key moved up during split from child %d", ErrKeyExists, key, child.Offset)
+// 			}
+// 			// else: key < n.Keys[i], so we still descend into child at index 'i' (the original one, now smaller)
+
+// 			// Read the correct child node *again* after the potential split and index change.
+// 			childOffset = n.Children[i] // Get potentially new offset
+// 			if childOffset <= 0 {
+// 				return fmt.Errorf("internal insert error: invalid child offset %d after split logic", childOffset)
+// 			}
+// 			child, err = n.tree.readNode(childOffset)
+// 			if err != nil {
+// 				return fmt.Errorf("insert error: failed reading child node %d after split: %w", childOffset, err)
+// 			}
+// 		}
+// 		// Now, the appropriate child node ('child') is guaranteed not to be full. Recursively insert.
+// 		return child.insertNonFull(key, value)
+// 	}
+// }
+
+// // splitChild splits a full child 'child' of the current node 'n' at index 'childIndex'
+// // Assumes 'n' is not full, and 'child' (n.Children[childIndex]) is full.
+// func (n *Node) splitChild(childIndex int, child *Node) error {
+// 	if child.NumKeys != 2*order-1 {
+// 		// This check prevents splitting non-full nodes, which would violate B-Tree rules.
+// 		return fmt.Errorf("splitChild error: attempt to split child node %d which is not full (%d/%d keys)", child.Offset, child.NumKeys, 2*order-1)
+// 	}
+// 	if n.NumKeys == 2*order-1 {
+// 		// Parent 'n' should not be full when calling splitChild. Root splitting is handled separately.
+// 		return fmt.Errorf("splitChild error: parent node %d is full, cannot split child %d", n.Offset, child.Offset)
+// 	}
+
+// 	// 1. Create a new node (newNode) to store the 't-1' upper keys from the child.
+// 	//    newNode will have the same leaf status as the child.
+// 	newNode := newNode(n.tree, child.IsLeaf)
+// 	newNodeOffset, err := n.tree.allocateNode() // Allocate disk space
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild failed for child %d: could not allocate space for new sibling node: %w", child.Offset, err)
+// 	}
+// 	newNode.Offset = newNodeOffset
+// 	newNode.NumKeys = order - 1 // The new node gets t-1 keys
+
+// 	// 2. Copy the upper 't-1' keys and values from 'child' to 'newNode'.
+// 	//    Keys start from index 'order' in the child.
+// 	copy(newNode.Keys[:order-1], child.Keys[order:])
+// 	copy(newNode.Values[:order-1], child.Values[order:])
+
+// 	// 3. If 'child' is an internal node, copy the upper 't' child pointers from 'child' to 'newNode'.
+// 	//    Children start from index 'order' in the child.
+// 	if !child.IsLeaf {
+// 		copy(newNode.Children[:order], child.Children[order:])
+// 	}
+
+// 	// 4. Reduce the number of keys in the original 'child' node to 't-1'.
+// 	//    Also clear the moved keys/values/children for clarity (optional but good practice).
+// 	oldChildNumKeys := child.NumKeys
+// 	child.NumKeys = order - 1
+// 	for k := child.NumKeys; k < oldChildNumKeys; k++ {
+// 		child.Keys[k] = 0
+// 		child.Values[k] = 0
+// 		if !child.IsLeaf {
+// 			child.Children[k+1] = 0 // Clear child pointer after the last remaining key
+// 		}
+// 	}
+// 	// Clear the middle key/value as well (it moves up)
+// 	child.Keys[order-1] = 0
+// 	child.Values[order-1] = 0
+// 	if !child.IsLeaf {
+// 		child.Children[order] = 0 // And the corresponding child ptr
+// 	}
+
+// 	// 5. Adjust the parent node 'n':
+// 	//    a. Make space for the new child pointer in 'n.Children'. Shift pointers right.
+// 	copy(n.Children[childIndex+2:], n.Children[childIndex+1:n.NumKeys+1])
+
+// 	//    b. Link 'newNode' as a child of 'n' at the newly created space.
+// 	n.Children[childIndex+1] = newNode.Offset
+
+// 	//    c. Make space for the middle key (from 'child') in 'n.Keys' and 'n.Values'. Shift right.
+// 	copy(n.Keys[childIndex+1:], n.Keys[childIndex:n.NumKeys])
+// 	copy(n.Values[childIndex+1:], n.Values[childIndex:n.NumKeys])
+
+// 	//    d. Move the middle key (and its value) from 'child' up into 'n'.
+// 	n.Keys[childIndex] = child.Keys[order-1]     // Middle key was at index t-1 (order-1)
+// 	n.Values[childIndex] = child.Values[order-1] // Copy associated value too
+
+// 	//    e. Increment the key count in the parent 'n'.
+// 	n.NumKeys++
+
+// 	// 6. Write all three modified nodes (parent 'n', original 'child', 'newNode') to disk.
+// 	//    Order matters slightly for crash consistency, but without WAL, it's best effort.
+// 	//    Writing children first, then parent might be marginally safer.
+// 	err = child.writeNode() // Write original child (now smaller)
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild failed for child %d: writing modified original child failed: %w", child.Offset, err)
+// 	}
+// 	err = newNode.writeNode() // Write new sibling node
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild failed for child %d: writing new sibling node %d failed: %w", child.Offset, newNode.Offset, err)
+// 	}
+// 	err = n.writeNode() // Write updated parent node
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild failed for child %d: writing updated parent node %d failed: %w", child.Offset, n.Offset, err)
+// 	}
+
+// 	return nil // Split successful
+// }
+
+// // Delete removes a key from the B-Tree.
+// func (t *BTree) Delete(key int64) error {
+// 	if t.Header.RootOffset <= 0 {
+// 		return ErrNotFound // Or specific error for invalid root
+// 	}
+
+// 	root, err := t.readNode(t.Header.RootOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("delete failed: could not read root node at offset %d: %w", t.Header.RootOffset, err)
+// 	}
+
+// 	err = root.deleteKey(key)
+// 	if err != nil {
+// 		// Don't modify the tree structure here based on root emptiness,
+// 		// let deleteKey handle it recursively. Just return the error.
+// 		return err // Propagate ErrNotFound or other deletion errors
+// 	}
+
+// 	// After successful deletion, check if the root node became empty *and* is not a leaf.
+// 	// This happens when its last key was moved down during a merge operation.
+// 	// Re-read root state as deletion might have modified it
+// 	rootAfterDelete, readErr := t.readNode(t.Header.RootOffset)
+// 	if readErr != nil {
+// 		// This is problematic, state is uncertain.
+// 		return fmt.Errorf("delete succeeded, but failed to re-read root node %d: %w", t.Header.RootOffset, readErr)
+// 	}
+
+// 	if rootAfterDelete.NumKeys == 0 && !rootAfterDelete.IsLeaf {
+// 		fmt.Printf("Root node %d became empty after deletion, promoting its only child %d as new root.\n", rootAfterDelete.Offset, rootAfterDelete.Children[0])
+// 		oldRootOffset := t.Header.RootOffset
+// 		// Promote the single child to be the new root
+// 		t.Header.RootOffset = rootAfterDelete.Children[0]
+// 		// Update the header file
+// 		if headerErr := t.writeHeader(); headerErr != nil {
+// 			// Attempt to revert header in memory? Best effort.
+// 			t.Header.RootOffset = oldRootOffset
+// 			return fmt.Errorf("CRITICAL: delete succeeded but failed to update header to new root %d: %w", rootAfterDelete.Children[0], headerErr)
+// 		}
+// 		// Ideally, the old root's page (oldRootOffset) should be marked as free/reusable here. Omitted.
+// 		fmt.Printf("Old root page %d is now unused (space not reclaimed).\n", oldRootOffset)
+// 	} else if rootAfterDelete.NumKeys == 0 && rootAfterDelete.IsLeaf {
+// 		// If the root is a leaf and becomes empty, the tree is now entirely empty.
+// 		// Keep the root node as is (an empty leaf). The RootOffset doesn't change.
+// 		fmt.Println("Tree is now empty after deleting the last key from the root leaf node.")
+// 	}
+
+// 	return nil // Deletion successful (or handled root update)
+// }
+
+// // deleteKey recursively finds and deletes a key starting from node 'n'
+// // This function handles the core B-Tree deletion logic including ensuring
+// // nodes have enough keys before descending.
+// func (n *Node) deleteKey(key int64) error {
+// 	idx := n.findKeyIndex(key) // Find index where key is or should be
+
+// 	// CASE 1: Key is found in the current node 'n'
+// 	if idx < n.NumKeys && n.Keys[idx] == key {
+// 		if n.IsLeaf {
+// 			// CASE 1a: Key found in a LEAF node. Simple deletion.
+// 			return n.deleteFromLeaf(idx) // Handles writing the node
+// 		} else {
+// 			// CASE 1b: Key found in an INTERNAL node. More complex.
+// 			return n.deleteFromInternal(idx) // Handles finding replacement, recursive delete, writing nodes
+// 		}
+// 	} else { // CASE 2: Key is NOT in the current node 'n'.
+// 		// If 'n' is a leaf, the key doesn't exist in this subtree.
+// 		if n.IsLeaf {
+// 			return ErrNotFound
+// 		}
+
+// 		// If 'n' is internal, the key *might* be in the subtree rooted at child 'idx'.
+// 		// Before descending, we MUST ensure the child node has at least 't' keys.
+// 		// If it only has 't-1' keys, we borrow or merge to bring it up to 't' keys.
+// 		// This ensures that if we need to delete from that child later, it won't immediately underflow again.
+
+// 		// 'flag' indicates if we descended into the last child (n.Children[n.NumKeys])
+// 		// This is relevant if merging causes the key's target subtree index to change.
+// 		// Let's simplify: always check child at index `idx`. If merge happens,
+// 		// the recursive call will naturally go to the correct (merged) node.
+
+// 		childToDescendIdx := idx // The index of the child we need to go into
+
+// 		childOffset := n.Children[childToDescendIdx]
+// 		if childOffset <= 0 {
+// 			return fmt.Errorf("delete internal error: node %d, invalid child offset %d at index %d", n.Offset, childOffset, childToDescendIdx)
+// 		}
+
+// 		child, err := n.tree.readNode(childOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("delete failed reading child %d (from parent %d index %d): %w", childOffset, n.Offset, childToDescendIdx, err)
+// 		}
+
+// 		// Check if the child needs restructuring *before* descending
+// 		if child.NumKeys < order { // Underflow condition: child has only t-1 keys
+// 			fmt.Printf("Child node %d (index %d) has minimum keys (%d), ensuring it has %d keys before descent.\n", child.Offset, childToDescendIdx, child.NumKeys, order)
+// 			err := n.ensureChildHasEnoughKeys(childToDescendIdx) // This attempts borrow/merge
+// 			if err != nil {
+// 				return fmt.Errorf("delete failed during pre-descent restructuring for child %d: %w", child.Offset, err)
+// 			}
+// 			// IMPORTANT: ensureChildHasEnoughKeys might have modified the parent 'n'
+// 			// and the child itself, or even merged children.
+// 			// We need to use the potentially updated state.
+// 			// It's safest to re-read the child node using the pointer from the *potentially modified* parent 'n'.
+// 			// However, the parent 'n' in memory *should* have been updated by ensureChildHasEnoughKeys.
+// 			// Let's trust the in-memory parent 'n' and get the (potentially new) child offset.
+// 			childOffset = n.Children[childToDescendIdx] // Get offset again from potentially modified parent
+// 			if childOffset <= 0 {
+// 				return fmt.Errorf("delete internal error: node %d, invalid child offset %d at index %d after ensure", n.Offset, childOffset, childToDescendIdx)
+// 			}
+
+// 			child, err = n.tree.readNode(childOffset) // Re-read the definitive child node
+// 			if err != nil {
+// 				return fmt.Errorf("delete failed reading child %d after ensure operation: %w", childOffset, err)
+// 			}
+// 			// Sanity check after ensure: child should now have >= t keys unless it was merged away?
+// 			// If merged, the recursive call should handle it. Assume child is valid now.
+// 			if child.NumKeys < order {
+// 				fmt.Printf("Warning: Child %d still has %d keys after ensureChildHasEnoughKeys (expected >= %d). Merge likely occurred.\n", child.Offset, child.NumKeys, order)
+// 				// Proceed with recursion, it will land in the merged node if necessary.
+// 			}
+// 		}
+
+// 		// Now, the child we are descending into has at least 't' keys. Recursively delete.
+// 		return child.deleteKey(key)
+// 	}
+// }
+
+// // findKeyIndex returns the index 'i' in node 'n' such that Keys[i] >= key.
+// // If key is greater than all keys, it returns n.NumKeys.
+// func (n *Node) findKeyIndex(key int64) int {
+// 	// Linear scan is sufficient for small 'order'.
+// 	// For larger orders, binary search (e.g., sort.Search) would be better.
+// 	i := 0
+// 	for i < n.NumKeys && key > n.Keys[i] {
+// 		i++
+// 	}
+// 	return i
+
+// 	/* Example using sort.Search:
+// 	   i := sort.Search(n.NumKeys, func(j int) bool {
+// 	       return n.Keys[j] >= key
+// 	   })
+// 	   return i
+// 	*/
+// }
+
+// // --- Deletion Helper Functions ---
+
+// // deleteFromLeaf removes the key at index 'idx' from leaf node 'n'. Assumes n is a leaf.
+// func (n *Node) deleteFromLeaf(idx int) error {
+// 	if !n.IsLeaf {
+// 		return errors.New("deleteFromLeaf called on internal node")
+// 	}
+// 	if idx < 0 || idx >= n.NumKeys {
+// 		return errors.New("invalid index for deleteFromLeaf")
+// 	}
+
+// 	// Shift keys and values left to overwrite the key at 'idx'.
+// 	copy(n.Keys[idx:], n.Keys[idx+1:n.NumKeys])
+// 	copy(n.Values[idx:], n.Values[idx+1:n.NumKeys])
+
+// 	// Decrease key count
+// 	n.NumKeys--
+
+// 	// Clear the now-unused last slot (optional, good practice)
+// 	n.Keys[n.NumKeys] = 0
+// 	n.Values[n.NumKeys] = 0
+
+// 	// Write the modified leaf node back to disk
+// 	fmt.Printf("Deleted key %d from leaf node %d.\n", n.Keys[idx], n.Offset) // Log before clearing potentially
+// 	return n.writeNode()
+// 	// Note: Underflow checks are handled by the caller (deleteKey) *before* descending into a node.
+// 	// This function just does the physical removal.
+// }
+
+// // deleteFromInternal handles deletion when the key is found at index 'idx' in internal node 'n'.
+// func (n *Node) deleteFromInternal(idx int) error {
+// 	if n.IsLeaf {
+// 		return errors.New("deleteFromInternal called on leaf node")
+// 	}
+// 	if idx < 0 || idx >= n.NumKeys {
+// 		return errors.New("invalid index for deleteFromInternal")
+// 	}
+
+// 	keyToDelete := n.Keys[idx]
+// 	fmt.Printf("Deleting key %d from internal node %d (index %d).\n", keyToDelete, n.Offset, idx)
+
+// 	// Identify the left and right child nodes relative to the key at 'idx'.
+// 	leftOff := n.Children[idx]    // Child preceding the key
+// 	rightOff := n.Children[idx+1] // Child succeeding the key
+
+// 	if leftOff <= 0 || rightOff <= 0 {
+// 		return fmt.Errorf("delete internal error: node %d has invalid child offset(s) around index %d (L:%d, R:%d)", n.Offset, idx, leftOff, rightOff)
+// 	}
+
+// 	// Read both children
+// 	leftNode, err := n.tree.readNode(leftOff)
+// 	if err != nil {
+// 		return fmt.Errorf("deleteInternal failed reading left child %d: %w", leftOff, err)
+// 	}
+// 	rightNode, err := n.tree.readNode(rightOff)
+// 	if err != nil {
+// 		return fmt.Errorf("deleteInternal failed reading right child %d: %w", rightOff, err)
+// 	}
+
+// 	// CASE 2a: Left child (leftNode) has at least 't' keys.
+// 	if leftNode.NumKeys >= order {
+// 		fmt.Printf("  Case 2a: Left child %d has enough keys (%d). Finding predecessor.\n", leftNode.Offset, leftNode.NumKeys)
+// 		// Find the predecessor key (largest key in the left child's subtree).
+// 		predKey, predVal, err := leftNode.findPredecessor()
+// 		if err != nil {
+// 			return fmt.Errorf("deleteInternal failed finding predecessor for key %d in subtree %d: %w", keyToDelete, leftNode.Offset, err)
+// 		}
+// 		fmt.Printf("  Found predecessor: %d (value %d).\n", predKey, predVal)
+
+// 		// Replace the key to be deleted in 'n' with the predecessor key/value.
+// 		n.Keys[idx] = predKey
+// 		n.Values[idx] = predVal
+// 		if err := n.writeNode(); err != nil { // Write parent node *before* recursive delete
+// 			return fmt.Errorf("deleteInternal (pred) failed writing updated parent node %d: %w", n.Offset, err)
+// 		}
+
+// 		// Recursively delete the predecessor key from the *left child's subtree*.
+// 		fmt.Printf("  Recursively deleting predecessor %d from left child %d.\n", predKey, leftNode.Offset)
+// 		return leftNode.deleteKey(predKey) // The recursive call handles restructuring if needed
+
+// 		// CASE 2b: Right child (rightNode) has at least 't' keys.
+// 	} else if rightNode.NumKeys >= order {
+// 		fmt.Printf("  Case 2b: Right child %d has enough keys (%d). Finding successor.\n", rightNode.Offset, rightNode.NumKeys)
+// 		// Find the successor key (smallest key in the right child's subtree).
+// 		succKey, succVal, err := rightNode.findSuccessor()
+// 		if err != nil {
+// 			return fmt.Errorf("deleteInternal failed finding successor for key %d in subtree %d: %w", keyToDelete, rightNode.Offset, err)
+// 		}
+// 		fmt.Printf("  Found successor: %d (value %d).\n", succKey, succVal)
+
+// 		// Replace the key to be deleted in 'n' with the successor key/value.
+// 		n.Keys[idx] = succKey
+// 		n.Values[idx] = succVal
+// 		if err := n.writeNode(); err != nil { // Write parent node *before* recursive delete
+// 			return fmt.Errorf("deleteInternal (succ) failed writing updated parent node %d: %w", n.Offset, err)
+// 		}
+
+// 		// Recursively delete the successor key from the *right child's subtree*.
+// 		fmt.Printf("  Recursively deleting successor %d from right child %d.\n", succKey, rightNode.Offset)
+// 		return rightNode.deleteKey(succKey)
+
+// 		// CASE 2c: Both left and right children have the minimum number of keys (t-1).
+// 	} else {
+// 		fmt.Printf("  Case 2c: Both children %d (%d keys) and %d (%d keys) have minimum keys. Merging.\n", leftNode.Offset, leftNode.NumKeys, rightNode.Offset, rightNode.NumKeys)
+// 		// Merge the right child into the left child. This also involves moving the key
+// 		// at index 'idx' from the parent 'n' down into the merged left child.
+
+// 		// Perform the merge. mergeChildren handles writing the parent and the merged child.
+// 		// It returns the merged node (which is the modified leftNode).
+// 		mergedNode, err := n.mergeChildren(idx)
+// 		if err != nil {
+// 			return fmt.Errorf("deleteInternal failed merging children %d and %d: %w", leftNode.Offset, rightNode.Offset, err)
+// 		}
+// 		// The original keyToDelete is now present within the 'mergedNode'.
+// 		// Recursively delete the original keyToDelete from the merged node.
+// 		fmt.Printf("  Recursively deleting original key %d from merged node %d.\n", keyToDelete, mergedNode.Offset)
+// 		return mergedNode.deleteKey(keyToDelete)
+// 	}
+// }
+
+// // findPredecessor finds the largest key/value pair in the subtree rooted at 'n'.
+// // It traverses down the rightmost path until a leaf node is reached.
+// func (n *Node) findPredecessor() (key, value int64, err error) {
+// 	curr := n
+// 	for !curr.IsLeaf {
+// 		if curr.NumKeys < 0 {
+// 			return 0, 0, fmt.Errorf("findPredecessor internal error: node %d has invalid numKeys %d", curr.Offset, curr.NumKeys)
+// 		}
+// 		if curr.NumKeys+1 > len(curr.Children) {
+// 			return 0, 0, fmt.Errorf("findPredecessor internal error: node %d requires child %d but len is %d", curr.Offset, curr.NumKeys, len(curr.Children))
+// 		}
+
+// 		childOffset := curr.Children[curr.NumKeys] // Go to the rightmost child
+// 		if childOffset <= 0 {
+// 			return 0, 0, fmt.Errorf("findPredecessor internal error: node %d has invalid rightmost child offset %d", curr.Offset, childOffset)
+// 		}
+
+// 		child, readErr := n.tree.readNode(childOffset)
+// 		if readErr != nil {
+// 			return 0, 0, fmt.Errorf("findPredecessor failed reading node %d: %w", childOffset, readErr)
+// 		}
+// 		curr = child // Move down
+// 	}
+// 	// Now 'curr' is the leaf node containing the predecessor
+// 	if curr.NumKeys == 0 {
+// 		return 0, 0, fmt.Errorf("findPredecessor internal error: leaf node %d is empty", curr.Offset)
+// 	}
+// 	// Return the rightmost key/value from this leaf node
+// 	predKey := curr.Keys[curr.NumKeys-1]
+// 	predVal := curr.Values[curr.NumKeys-1]
+// 	return predKey, predVal, nil
+// }
+
+// // findSuccessor finds the smallest key/value pair in the subtree rooted at 'n'.
+// // It traverses down the leftmost path until a leaf node is reached.
+// func (n *Node) findSuccessor() (key, value int64, err error) {
+// 	curr := n
+// 	for !curr.IsLeaf {
+// 		if len(curr.Children) == 0 {
+// 			return 0, 0, fmt.Errorf("findSuccessor internal error: node %d has no children array", curr.Offset)
+// 		}
+// 		childOffset := curr.Children[0] // Go to the leftmost child
+// 		if childOffset <= 0 {
+// 			return 0, 0, fmt.Errorf("findSuccessor internal error: node %d has invalid leftmost child offset %d", curr.Offset, childOffset)
+// 		}
+
+// 		child, readErr := n.tree.readNode(childOffset)
+// 		if readErr != nil {
+// 			return 0, 0, fmt.Errorf("findSuccessor failed reading node %d: %w", childOffset, readErr)
+// 		}
+// 		curr = child // Move down
+// 	}
+// 	// Now 'curr' is the leaf node containing the successor
+// 	if curr.NumKeys == 0 {
+// 		return 0, 0, fmt.Errorf("findSuccessor internal error: leaf node %d is empty", curr.Offset)
+// 	}
+// 	// Return the leftmost key/value from this leaf node
+// 	succKey := curr.Keys[0]
+// 	succVal := curr.Values[0]
+// 	return succKey, succVal, nil
+// }
+
+// // ensureChildHasEnoughKeys checks if the child at index 'childIdx' in node 'n'
+// // has fewer than 't' (order) keys. If so, it attempts to borrow from a sibling
+// // or merges the child with a sibling to ensure it has at least 't' keys.
+// // This is called *before* descending into a child during deletion.
+// func (n *Node) ensureChildHasEnoughKeys(childIdx int) error {
+// 	if childIdx < 0 || childIdx > n.NumKeys { // Valid child indices are 0 to NumKeys
+// 		return fmt.Errorf("ensureChildHasEnoughKeys internal error: invalid child index %d for node %d with %d keys", childIdx, n.Offset, n.NumKeys)
+// 	}
+// 	childOffset := n.Children[childIdx]
+// 	if childOffset <= 0 {
+// 		return fmt.Errorf("ensureChildHasEnoughKeys internal error: node %d, invalid child offset %d at index %d", n.Offset, childOffset, childIdx)
+// 	}
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("ensureChildHasEnoughKeys failed read child %d: %w", childOffset, err)
+// 	}
+
+// 	// If child already has enough keys, do nothing.
+// 	if child.NumKeys >= order {
+// 		return nil
+// 	}
+
+// 	fmt.Printf("  Restructuring needed: Child %d (idx %d) has %d keys (min %d).\n", child.Offset, childIdx, child.NumKeys, order-1)
+
+// 	// Try to borrow from the left sibling first.
+// 	if childIdx > 0 { // Check if a left sibling exists
+// 		leftSiblingIdx := childIdx - 1
+// 		leftSiblingOffset := n.Children[leftSiblingIdx]
+// 		if leftSiblingOffset <= 0 {
+// 			return fmt.Errorf("ensureChildHasEnoughKeys internal error: node %d, invalid left sibling offset %d at index %d", n.Offset, leftSiblingOffset, leftSiblingIdx)
+// 		}
+// 		leftSibling, err := n.tree.readNode(leftSiblingOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("ensureChildHasEnoughKeys failed read left sibling %d: %w", leftSiblingOffset, err)
+// 		}
+
+// 		// Check if the left sibling has more than the minimum number of keys.
+// 		if leftSibling.NumKeys >= order {
+// 			fmt.Printf("    Attempting to borrow from left sibling %d (has %d keys).\n", leftSibling.Offset, leftSibling.NumKeys)
+// 			return n.borrowFromLeftSibling(childIdx) // This function handles writes
+// 		}
+// 		fmt.Printf("    Left sibling %d only has %d keys, cannot borrow.\n", leftSibling.Offset, leftSibling.NumKeys)
+// 	}
+
+// 	// If left borrowing failed or no left sibling, try borrowing from the right sibling.
+// 	if childIdx < n.NumKeys { // Check if a right sibling exists (index NumKeys is the last child)
+// 		rightSiblingIdx := childIdx + 1
+// 		rightSiblingOffset := n.Children[rightSiblingIdx]
+// 		if rightSiblingOffset <= 0 {
+// 			return fmt.Errorf("ensureChildHasEnoughKeys internal error: node %d, invalid right sibling offset %d at index %d", n.Offset, rightSiblingOffset, rightSiblingIdx)
+// 		}
+// 		rightSibling, err := n.tree.readNode(rightSiblingOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("ensureChildHasEnoughKeys failed read right sibling %d: %w", rightSiblingOffset, err)
+// 		}
+
+// 		// Check if the right sibling has more than the minimum number of keys.
+// 		if rightSibling.NumKeys >= order {
+// 			fmt.Printf("    Attempting to borrow from right sibling %d (has %d keys).\n", rightSibling.Offset, rightSibling.NumKeys)
+// 			return n.borrowFromRightSibling(childIdx) // This function handles writes
+// 		}
+// 		fmt.Printf("    Right sibling %d only has %d keys, cannot borrow.\n", rightSibling.Offset, rightSibling.NumKeys)
+// 	}
+
+// 	// If borrowing from both sides failed, we must merge the child with one of its siblings.
+// 	fmt.Printf("    Borrowing failed, attempting merge.\n")
+// 	if childIdx > 0 {
+// 		// Merge child with its left sibling. The merge index is the left sibling's index.
+// 		fmt.Printf("    Merging child %d (idx %d) with left sibling %d (idx %d).\n", child.Offset, childIdx, n.Children[childIdx-1], childIdx-1)
+// 		_, err := n.mergeChildren(childIdx - 1) // Merges child[idx-1] and child[idx]
+// 		return err
+// 	} else {
+// 		// Merge child with its right sibling. The merge index is the child's own index.
+// 		// (Merging child[idx] and child[idx+1])
+// 		fmt.Printf("    Merging child %d (idx %d) with right sibling %d (idx %d).\n", child.Offset, childIdx, n.Children[childIdx+1], childIdx+1)
+// 		_, err := n.mergeChildren(childIdx)
+// 		return err
+// 	}
+// }
+
+// // borrowFromLeftSibling transfers the largest key from left sibling up to parent,
+// // transfers the separating key from parent down to the child, and moves the
+// // corresponding child pointer if applicable. Assumes left sibling has > t-1 keys.
+// func (n *Node) borrowFromLeftSibling(cIdx int) error {
+// 	lIdx := cIdx - 1 // Left sibling index
+// 	childOffset := n.Children[cIdx]
+// 	leftSiblingOffset := n.Children[lIdx]
+
+// 	if childOffset <= 0 || leftSiblingOffset <= 0 {
+// 		return errors.New("borrowLeft internal error: invalid offsets")
+// 	}
+
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowLeft failed read child %d: %w", childOffset, err)
+// 	}
+// 	leftSibling, err := n.tree.readNode(leftSiblingOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowLeft failed read left sibling %d: %w", leftSiblingOffset, err)
+// 	}
+
+// 	// Precondition check (should be guaranteed by caller, but double-check)
+// 	if leftSibling.NumKeys < order {
+// 		return errors.New("borrowLeft internal error: left sibling has too few keys")
+// 	}
+// 	if child.NumKeys >= order {
+// 		return errors.New("borrowLeft internal error: child already has enough keys")
+// 	}
+
+// 	// 1. Make space in 'child' node for the incoming key/value/child pointer.
+// 	//    Shift existing keys/values one position to the right.
+// 	copy(child.Keys[1:], child.Keys[:child.NumKeys])
+// 	copy(child.Values[1:], child.Values[:child.NumKeys])
+// 	//    Shift children pointers too if 'child' is internal.
+// 	if !child.IsLeaf {
+// 		copy(child.Children[1:], child.Children[:child.NumKeys+1])
+// 	}
+
+// 	// 2. Move the separating key/value from the parent 'n' (at index lIdx) down to the first position in 'child'.
+// 	child.Keys[0] = n.Keys[lIdx]
+// 	child.Values[0] = n.Values[lIdx]
+// 	child.NumKeys++ // Increment child's key count now
+
+// 	// 3. If 'child' is internal, move the rightmost child pointer from 'leftSibling' to the first position in 'child.Children'.
+// 	if !child.IsLeaf {
+// 		if leftSibling.IsLeaf {
+// 			return errors.New("borrowLeft internal error: trying to borrow child pointer from leaf sibling")
+// 		}
+// 		child.Children[0] = leftSibling.Children[leftSibling.NumKeys] // Pointer is after the last key
+// 		leftSibling.Children[leftSibling.NumKeys] = 0                 // Clear the moved pointer in sibling
+// 	}
+
+// 	// 4. Move the largest key/value from 'leftSibling' up to replace the key in the parent 'n' (at index lIdx).
+// 	n.Keys[lIdx] = leftSibling.Keys[leftSibling.NumKeys-1]
+// 	n.Values[lIdx] = leftSibling.Values[leftSibling.NumKeys-1]
+
+// 	// 5. Decrement key count in 'leftSibling' and clear the moved key/value.
+// 	leftSibling.NumKeys--
+// 	leftSibling.Keys[leftSibling.NumKeys] = 0   // Clear the moved key
+// 	leftSibling.Values[leftSibling.NumKeys] = 0 // Clear the moved value
+// 	// Note: The child pointer was already moved/cleared in step 3 if applicable.
+
+// 	// 6. Write all three modified nodes back to disk.
+// 	if err := child.writeNode(); err != nil {
+// 		return fmt.Errorf("borrowLeft failed write child %d: %w", child.Offset, err)
+// 	}
+// 	if err := leftSibling.writeNode(); err != nil {
+// 		return fmt.Errorf("borrowLeft failed write left sibling %d: %w", leftSibling.Offset, err)
+// 	}
+// 	if err := n.writeNode(); err != nil {
+// 		return fmt.Errorf("borrowLeft failed write parent %d: %w", n.Offset, err)
+// 	}
+
+// 	fmt.Printf("  Successfully borrowed from left sibling %d to child %d via parent %d.\n", leftSibling.Offset, child.Offset, n.Offset)
+// 	return nil
+// }
+
+// // borrowFromRightSibling transfers the smallest key from right sibling up to parent,
+// // transfers the separating key from parent down to the child, and moves the
+// // corresponding child pointer if applicable. Assumes right sibling has > t-1 keys.
+// func (n *Node) borrowFromRightSibling(cIdx int) error {
+// 	rIdx := cIdx + 1 // Right sibling index
+// 	childOffset := n.Children[cIdx]
+// 	rightSiblingOffset := n.Children[rIdx]
+
+// 	if childOffset <= 0 || rightSiblingOffset <= 0 {
+// 		return errors.New("borrowRight internal error: invalid offsets")
+// 	}
+
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowRight failed read child %d: %w", childOffset, err)
+// 	}
+// 	rightSibling, err := n.tree.readNode(rightSiblingOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowRight failed read right sibling %d: %w", rightSiblingOffset, err)
+// 	}
+
+// 	// Precondition check
+// 	if rightSibling.NumKeys < order {
+// 		return errors.New("borrowRight internal error: right sibling has too few keys")
+// 	}
+// 	if child.NumKeys >= order {
+// 		return errors.New("borrowRight internal error: child already has enough keys")
+// 	}
+
+// 	// 1. Move the separating key/value from the parent 'n' (at index cIdx) down to the end of 'child'.
+// 	child.Keys[child.NumKeys] = n.Keys[cIdx]     // Append key
+// 	child.Values[child.NumKeys] = n.Values[cIdx] // Append value
+
+// 	// 2. If 'child' is internal, move the leftmost child pointer from 'rightSibling' to the end of 'child.Children'.
+// 	//    This happens *before* incrementing child.NumKeys.
+// 	if !child.IsLeaf {
+// 		if rightSibling.IsLeaf {
+// 			return errors.New("borrowRight internal error: trying to borrow child pointer from leaf sibling")
+// 		}
+// 		child.Children[child.NumKeys+1] = rightSibling.Children[0] // Append pointer
+// 	}
+
+// 	// 3. Increment child's key count *after* placing key and potentially child ptr.
+// 	child.NumKeys++
+
+// 	// 4. Move the smallest key/value from 'rightSibling' up to replace the key in the parent 'n' (at index cIdx).
+// 	n.Keys[cIdx] = rightSibling.Keys[0]
+// 	n.Values[cIdx] = rightSibling.Values[0]
+
+// 	// 5. Adjust 'rightSibling': Remove the first key/value and shift everything left.
+// 	//    Also remove the first child pointer if internal.
+// 	copy(rightSibling.Keys[:], rightSibling.Keys[1:rightSibling.NumKeys])
+// 	copy(rightSibling.Values[:], rightSibling.Values[1:rightSibling.NumKeys])
+// 	if !rightSibling.IsLeaf {
+// 		copy(rightSibling.Children[:], rightSibling.Children[1:rightSibling.NumKeys+1])
+// 		rightSibling.Children[rightSibling.NumKeys] = 0 // Clear last pointer slot
+// 	}
+// 	rightSibling.NumKeys--
+// 	// Clear the now-unused last slots in rightSibling
+// 	rightSibling.Keys[rightSibling.NumKeys] = 0
+// 	rightSibling.Values[rightSibling.NumKeys] = 0
+
+// 	// 6. Write all three modified nodes back to disk.
+// 	if err := child.writeNode(); err != nil {
+// 		return fmt.Errorf("borrowRight failed write child %d: %w", child.Offset, err)
+// 	}
+// 	if err := rightSibling.writeNode(); err != nil {
+// 		return fmt.Errorf("borrowRight failed write right sibling %d: %w", rightSibling.Offset, err)
+// 	}
+// 	if err := n.writeNode(); err != nil {
+// 		return fmt.Errorf("borrowRight failed write parent %d: %w", n.Offset, err)
+// 	}
+
+// 	fmt.Printf("  Successfully borrowed from right sibling %d to child %d via parent %d.\n", rightSibling.Offset, child.Offset, n.Offset)
+// 	return nil
+// }
+
+// // mergeChildren merges the child node at index 'idx+1' (right child) into the
+// // child node at index 'idx' (left child). It also moves the separating key
+// // from the parent node 'n' down into the merged left child.
+// // Assumes both children have exactly 't-1' keys.
+// // Returns the merged node (the modified left child).
+// func (n *Node) mergeChildren(idx int) (*Node, error) {
+// 	if idx < 0 || idx >= n.NumKeys {
+// 		return nil, fmt.Errorf("mergeChildren internal error: invalid index %d for parent %d with %d keys", idx, n.Offset, n.NumKeys)
+// 	}
+
+// 	leftOff := n.Children[idx]
+// 	rightOff := n.Children[idx+1]
+// 	keyFromParent := n.Keys[idx]
+// 	valFromParent := n.Values[idx]
+
+// 	if leftOff <= 0 || rightOff <= 0 {
+// 		return nil, fmt.Errorf("mergeChildren internal error: node %d has invalid child offset(s) around index %d (L:%d, R:%d)", n.Offset, idx, leftOff, rightOff)
+// 	}
+
+// 	leftNode, err := n.tree.readNode(leftOff)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("merge failed reading left child %d: %w", leftOff, err)
+// 	}
+// 	rightNode, err := n.tree.readNode(rightOff)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("merge failed reading right child %d: %w", rightOff, err)
+// 	}
+
+// 	// Precondition check (should be guaranteed by caller, but double-check)
+// 	if leftNode.NumKeys != order-1 || rightNode.NumKeys != order-1 {
+// 		fmt.Printf("Warning: mergeChildren called on node %d, but children %d(%d keys) or %d(%d keys) don't have exactly t-1 keys.\n", n.Offset, leftNode.Offset, leftNode.NumKeys, rightNode.Offset, rightNode.NumKeys)
+// 		// Proceeding anyway might lead to invalid tree state, but could be result of complex delete sequence.
+// 		// Let's return error for safety in this example.
+// 		return nil, fmt.Errorf("mergeChildren precondition failed: children %d(%d) and %d(%d) don't both have t-1=%d keys", leftNode.Offset, leftNode.NumKeys, rightNode.Offset, rightNode.NumKeys, order-1)
+// 	}
+// 	if leftNode.IsLeaf != rightNode.IsLeaf {
+// 		return nil, fmt.Errorf("mergeChildren internal error: attempting to merge nodes with different leaf status (L:%t, R:%t)", leftNode.IsLeaf, rightNode.IsLeaf)
+// 	}
+
+// 	// 1. Move the separating key/value from parent 'n' down into 'leftNode'.
+// 	//    It becomes the new median key in the merged node.
+// 	leftNode.Keys[leftNode.NumKeys] = keyFromParent
+// 	leftNode.Values[leftNode.NumKeys] = valFromParent
+// 	leftNode.NumKeys++ // Increment count for the key from parent
+
+// 	// 2. Copy all keys and values from 'rightNode' into 'leftNode'.
+// 	copy(leftNode.Keys[leftNode.NumKeys:], rightNode.Keys[:rightNode.NumKeys])
+// 	copy(leftNode.Values[leftNode.NumKeys:], rightNode.Values[:rightNode.NumKeys])
+
+// 	// 3. If they are internal nodes, copy children pointers from 'rightNode' too.
+// 	if !leftNode.IsLeaf {
+// 		copy(leftNode.Children[leftNode.NumKeys:], rightNode.Children[:rightNode.NumKeys+1])
+// 	}
+
+// 	// 4. Update the final key count in the merged 'leftNode'.
+// 	leftNode.NumKeys += rightNode.NumKeys // Total keys = (t-1) + 1 + (t-1) = 2t-1 (a full node)
+
+// 	// 5. Adjust the parent node 'n': Remove the key/value at 'idx' and the child pointer at 'idx+1'.
+// 	//    Shift keys/values left starting from idx.
+// 	copy(n.Keys[idx:], n.Keys[idx+1:n.NumKeys])
+// 	copy(n.Values[idx:], n.Values[idx+1:n.NumKeys])
+// 	//    Shift child pointers left starting from idx+1.
+// 	copy(n.Children[idx+1:], n.Children[idx+2:n.NumKeys+1]) // Shift NumKeys pointers (indices idx+1 to NumKeys)
+// 	n.NumKeys--                                             // Decrement parent key count
+
+// 	// Clear the now-unused slots in parent
+// 	n.Keys[n.NumKeys] = 0
+// 	n.Values[n.NumKeys] = 0
+// 	n.Children[n.NumKeys+1] = 0
+
+// 	// 6. Write the modified parent 'n' and the merged 'leftNode' back to disk.
+// 	//    The 'rightNode' is now unused. Its space should be reclaimed in a real system.
+// 	if err := leftNode.writeNode(); err != nil {
+// 		return nil, fmt.Errorf("merge failed writing merged node %d: %w", leftNode.Offset, err)
+// 	}
+// 	if err := n.writeNode(); err != nil {
+// 		return nil, fmt.Errorf("merge failed writing updated parent node %d: %w", n.Offset, err)
+// 	}
+
+// 	fmt.Printf("  Successfully merged child %d into child %d via parent %d. Node %d is now unused (space not reclaimed).\n", rightNode.Offset, leftNode.Offset, n.Offset, rightNode.Offset)
+
+// 	// TODO: Add rightNode.Offset to a freelist here for space reclamation.
+
+// 	return leftNode, nil // Return the merged node (which is the modified left child)
+// }
+
+// // --- Utility/Debugging Functions ---
+
+// // printTree performs a simple level-order traversal to print node info
+// func (t *BTree) printTree() error {
+// 	fmt.Println("\n--- B-Tree Structure ---")
+// 	if t.Header.RootOffset <= 0 {
+// 		fmt.Println("(Tree is Empty or Root Invalid)")
+// 		return nil
+// 	}
+
+// 	type levelEntry struct {
+// 		offset int64
+// 		level  int
+// 	}
+
+// 	queue := []levelEntry{{offset: t.Header.RootOffset, level: 0}}
+// 	currentLevel := 0
+
+// 	for len(queue) > 0 {
+// 		entry := queue[0]
+// 		queue = queue[1:] // Dequeue
+
+// 		if entry.level > currentLevel {
+// 			currentLevel = entry.level
+// 			fmt.Println() // Newline for new level
+// 		}
+// 		if entry.level == currentLevel && entry.offset != t.Header.RootOffset && len(queue) > 0 && queue[0].level == currentLevel {
+// 			// fmt.Print(" | ") // Separator between nodes on same level (optional)
+// 		}
+
+// 		node, err := t.readNode(entry.offset)
+// 		if err != nil {
+// 			fmt.Printf("  Error reading node at offset %d (Level %d): %v\n", entry.offset, entry.level, err)
+// 			continue
+// 		}
+
+// 		leafMarker := ""
+// 		if node.IsLeaf {
+// 			leafMarker = " (Leaf)"
+// 		}
+// 		fmt.Printf(" L%d N%d[%d keys%s]:{", entry.level, node.Offset, node.NumKeys, leafMarker)
+// 		for k := 0; k < node.NumKeys; k++ {
+// 			fmt.Printf("%d:%d", node.Keys[k], node.Values[k])
+// 			if k < node.NumKeys-1 {
+// 				fmt.Print(", ")
+// 			}
+// 		}
+// 		fmt.Print("}")
+// 		if !node.IsLeaf {
+// 			fmt.Print(" Children:[")
+// 			for c := 0; c <= node.NumKeys; c++ { // NumKeys + 1 children
+// 				fmt.Printf("%d", node.Children[c])
+// 				if c < node.NumKeys {
+// 					fmt.Print("|")
+// 				}
+// 				if node.Children[c] > 0 {
+// 					queue = append(queue, levelEntry{offset: node.Children[c], level: entry.level + 1}) // Enqueue child
+// 				} else if node.Children[c] <= 0 {
+// 					// Print placeholder for invalid child ptr if needed for debugging
+// 					// fmt.Print("X")
+// 				}
+// 			}
+// 			fmt.Print("]")
+// 		}
+// 		fmt.Print("   ") // Space between nodes on same level
+
+// 	}
+// 	fmt.Println("\n------------------------")
+// 	return nil
+// }
+
+// // --- Main Function (Example Usage) ---
+
+// func main() {
+// 	dbFile := "mybtree_fixed.db" // Use a new file name
+// 	// Remove existing file for a clean start (optional)
+// 	os.Remove(dbFile)
+// 	fmt.Printf("Attempting to use database file: %s\n", dbFile)
+
+// 	// Create or open the B-Tree
+// 	tree, err := NewBTree(dbFile)
+// 	if err != nil {
+// 		fmt.Printf("FATAL: Error creating/opening BTree: %v\n", err)
+// 		return
+// 	}
+// 	// Use defer to ensure Close is called even on panic (though panics should be avoided)
+// 	defer func() {
+// 		if cerr := tree.Close(); cerr != nil {
+// 			fmt.Printf("Error closing B-Tree file: %v\n", cerr)
+// 		}
+// 	}()
+
+// 	fmt.Println("\n--- Inserting Data ---")
+// 	// Use the same keys as before to test the fixed search
+// 	keysToInsert := []int64{10, 20, 5, 15, 25, 30, 12, 18, 22, 28, 3, 7, 11, 13, 17, 19, 21, 23, 27, 29, 35, 40, 1, 50, 55, 60, 45}
+// 	for _, k := range keysToInsert {
+// 		v := k * 10 // Simple value based on key
+// 		fmt.Printf("Inserting %d -> %d\n", k, v)
+// 		err := tree.Insert(k, v)
+// 		if err != nil {
+// 			fmt.Printf("  Error inserting %d: %v\n", k, err)
+// 			// Optional: Print tree state on error for debugging
+// 			// tree.printTree()
+// 			if errors.Is(err, ErrKeyExists) {
+// 				fmt.Println("  (Ignoring duplicate key error)")
+// 				continue // Continue inserting others if duplicate found
+// 			} else {
+// 				// For other errors, maybe stop?
+// 				// return
+// 			}
+// 		}
+// 	}
+
+// 	fmt.Println("\n--- Tree structure after initial insertions ---")
+// 	tree.printTree()
+
+// 	fmt.Println("\n--- Searching Data (Initial - Test Fix) ---")
+// 	// Add key 30 (which failed before) and other internal keys (11, 18, 23)
+// 	keysToSearch := []int64{15, 7, 30, 99, 1, 50, 11, 18, 23}
+// 	for _, k := range keysToSearch {
+// 		val, err := tree.Search(k)
+// 		if err != nil {
+// 			fmt.Printf("Search %d: Error - %v\n", k, err)
+// 		} else {
+// 			fmt.Printf("Search %d: Found value %d\n", k, val)
+// 		}
+// 	}
+
+// 	fmt.Println("\n--- Deleting Data ---")
+// 	// Use the same deletion sequence
+// 	keysToDelete := []int64{18, 12, 22, 5, 15, 25, 10, 30, 20, 99}
+// 	for _, k := range keysToDelete {
+// 		fmt.Printf("\nAttempting to delete key %d...\n", k)
+// 		err := tree.Delete(k)
+// 		if err != nil {
+// 			fmt.Printf("  Error deleting %d: %v\n", k, err)
+// 		} else {
+// 			fmt.Printf("  Successfully deleted %d\n", k)
+// 			// Optional: Print tree after each successful deletion for debugging
+// 			// tree.printTree()
+// 		}
+// 	}
+
+// 	fmt.Println("\n--- Tree structure after deletions ---")
+// 	tree.printTree()
+
+// 	fmt.Println("\n--- Searching after deletions ---")
+// 	// Keys expected to be gone: 18, 12, 22, 5, 15, 25, 10, 30, 20
+// 	// Keys expected to remain (from original set): 1, 3, 7, 11, 13, 17, 19, 21, 23, 27, 28, 29, 35, 40, 45, 50, 55, 60
+// 	keysToSearchAfterDel := []int64{15, 7, 30, 18, 1, 50, 11, 21, 45}
+// 	for _, k := range keysToSearchAfterDel {
+// 		val, err := tree.Search(k)
+// 		if err != nil {
+// 			fmt.Printf("Search %d: Error - %v\n", k, err)
+// 		} else {
+// 			fmt.Printf("Search %d: Found value %d\n", k, val)
+// 		}
+// 	}
+
+// 	// Example: Insert after delete
+// 	fmt.Println("\n--- Inserting after delete ---")
+// 	err = tree.Insert(18, 180) // Re-insert 18
+// 	if err != nil {
+// 		fmt.Printf("Error inserting 18 again: %v\n", err)
+// 	} else {
+// 		fmt.Println("Inserted 18 again.")
+// 	}
+// 	err = tree.Insert(30, 300) // Re-insert 30
+// 	if err != nil {
+// 		fmt.Printf("Error inserting 30 again: %v\n", err)
+// 	} else {
+// 		fmt.Println("Inserted 30 again.")
+// 	}
+
+// 	fmt.Println("\n--- Searching after re-insertion ---")
+// 	val, err := tree.Search(18)
+// 	if err != nil {
+// 		fmt.Printf("Search 18: Error - %v\n", err)
+// 	} else {
+// 		fmt.Printf("Search 18: Found value %d\n", val)
+// 	}
+// 	val, err = tree.Search(30)
+// 	if err != nil {
+// 		fmt.Printf("Search 30: Error - %v\n", err)
+// 	} else {
+// 		fmt.Printf("Search 30: Found value %d\n", val)
+// 	}
+
+// 	fmt.Println("\n--- Final Tree Structure ---")
+// 	tree.printTree()
+
+// 	fmt.Println("\nOperations complete. B-Tree data saved in", dbFile)
+// }
+
+// gemini pro 2
+
+// package main
+
+// import (
+// 	"bytes"
+// 	"encoding/binary"
+// 	"errors"
+// 	"fmt"
+// 	"os"
+// )
+
+// // Constants
+// const (
+// 	// PageSize defines the fixed size of a node block in the file.
+// 	// Needs to be large enough to hold header + keys + values + children offsets.
+// 	// Choose a value like 4096, a common disk block size.
+// 	pageSize = 4096
+// 	// Order (t) of the B-Tree. Max keys = 2t-1, Min keys = t-1 (except root).
+// 	// Max children = 2t, Min children = t.
+// 	// We need to calculate 't' based on pageSize and key/value/offset sizes.
+// 	// Let's estimate roughly: int64=8 bytes.
+// 	// Node structure: isLeaf(1) + numKeys(4) + keys(8*(2t-1)) + values(8*(2t-1)) + children(8*(2t)) + padding
+// 	// pageSize ≈ 1 + 4 + 16*(2t-1) + 16*t => 4096 ≈ 5 + 32t - 16 + 16t => 4096 ≈ 48t - 11 => t ≈ 4107/48 ≈ 85
+// 	// Let's choose a smaller 't' for easier testing/demonstration.
+// 	order = 5 // Max keys = 9, Min keys = 4
+// 	// headerSize defines the size of the file header.
+// 	headerSize = 64 // Room for root offset, order, next free offset etc. (keep it simple for now)
+// )
+
+// // Errors
+// var (
+// 	ErrNotFound      = errors.New("key not found")
+// 	ErrKeyExists     = errors.New("key already exists")
+// 	ErrInvalidOffset = errors.New("invalid node offset")
+// )
+
+// // --- Data Structures ---
+
+// // Header stores metadata about the B-Tree file
+// type Header struct {
+// 	RootOffset     int64 // Offset of the root node page in the file
+// 	Order          int32 // The order 't' of the tree
+// 	NextFreeOffset int64 // Offset for allocating the next new node page
+// 	// Add other metadata if needed (e.g., tree height, total keys)
+// }
+
+// // Node represents a B-Tree node (either leaf or internal)
+// type Node struct {
+// 	Offset   int64    // The offset of this node in the file
+// 	IsLeaf   bool     // True if this node is a leaf
+// 	NumKeys  int      // Current number of keys in the node
+// 	Keys     []int64  // Keys stored in the node (size 2*order - 1)
+// 	Values   []int64  // Values associated with keys (only relevant for leaves in this simple impl)
+// 	Children []int64  // File offsets of child nodes (size 2*order)
+// 	file     *os.File // Reference to the file for read/write (passed during operations)
+// 	tree     *BTree   // Reference back to the tree for context
+// }
+
+// // BTree represents the persistent B-Tree
+// type BTree struct {
+// 	file   *os.File
+// 	Header Header
+// 	// Add caches or other runtime structures if needed
+// }
+
+// // --- Persistence Functions ---
+
+// // newNode creates an empty in-memory node structure
+// func newNode(t *BTree, isLeaf bool) *Node {
+// 	return &Node{
+// 		Offset:   -1, // Not yet persisted
+// 		IsLeaf:   isLeaf,
+// 		NumKeys:  0,
+// 		Keys:     make([]int64, 2*order-1),
+// 		Values:   make([]int64, 2*order-1), // Allocate even for internal nodes for simplicity
+// 		Children: make([]int64, 2*order),
+// 		tree:     t,
+// 		file:     t.file,
+// 	}
+// }
+
+// // writeHeader writes the BTree header to the start of the file
+// func (t *BTree) writeHeader() error {
+// 	buf := new(bytes.Buffer)
+// 	// Ensure consistent byte order
+// 	err := binary.Write(buf, binary.LittleEndian, t.Header)
+// 	if err != nil {
+// 		return fmt.Errorf("error encoding header: %w", err)
+// 	}
+// 	// Pad header to headerSize if needed (binary.Write might already do this depending on struct)
+// 	paddedBuf := make([]byte, headerSize)
+// 	copy(paddedBuf, buf.Bytes())
+
+// 	_, err = t.file.WriteAt(paddedBuf, 0)
+// 	if err != nil {
+// 		return fmt.Errorf("error writing header to file: %w", err)
+// 	}
+// 	return t.file.Sync() // Ensure header is flushed
+// }
+
+// // readHeader reads the BTree header from the start of the file
+// func (t *BTree) readHeader() error {
+// 	buf := make([]byte, headerSize)
+// 	_, err := t.file.ReadAt(buf, 0)
+// 	if err != nil {
+// 		// Handle EOF potentially meaning new file
+// 		if err == errors.New("EOF") || err.Error() == "EOF" { // Simple check
+// 			return errors.New("empty or new file, header not found")
+// 		}
+// 		return fmt.Errorf("error reading header from file: %w", err)
+// 	}
+
+// 	reader := bytes.NewReader(buf)
+// 	err = binary.Read(reader, binary.LittleEndian, &t.Header)
+// 	if err != nil {
+// 		return fmt.Errorf("error decoding header: %w", err)
+// 	}
+// 	// Basic validation
+// 	if t.Header.Order != int32(order) && t.Header.Order != 0 { // Allow 0 for initial state
+// 		return fmt.Errorf("mismatched order in file header (%d) and constant (%d)", t.Header.Order, order)
+// 	}
+// 	return nil
+// }
+
+// // serializeNode converts a Node struct into a byte slice for writing
+// func (n *Node) serialize() ([]byte, error) {
+// 	buf := new(bytes.Buffer)
+// 	var isLeafByte byte = 0
+// 	if n.IsLeaf {
+// 		isLeafByte = 1
+// 	}
+
+// 	// Write fields in order
+// 	binary.Write(buf, binary.LittleEndian, isLeafByte)
+// 	binary.Write(buf, binary.LittleEndian, int32(n.NumKeys)) // Use int32 for fixed size
+// 	binary.Write(buf, binary.LittleEndian, n.Keys)
+// 	binary.Write(buf, binary.LittleEndian, n.Values)
+// 	binary.Write(buf, binary.LittleEndian, n.Children)
+
+// 	// Pad to pageSize
+// 	serializedData := buf.Bytes()
+// 	if len(serializedData) > pageSize {
+// 		return nil, fmt.Errorf("node data exceeds pageSize (%d > %d)", len(serializedData), pageSize)
+// 	}
+// 	paddedData := make([]byte, pageSize)
+// 	copy(paddedData, serializedData)
+
+// 	return paddedData, nil
+// }
+
+// // deserializeNode converts a byte slice from the file into a Node struct
+// func deserializeNode(data []byte, t *BTree, offset int64) (*Node, error) {
+// 	if len(data) != pageSize {
+// 		return nil, fmt.Errorf("invalid data size for deserialization: %d != %d", len(data), pageSize)
+// 	}
+// 	n := newNode(t, false) // Start with default, will be overwritten
+// 	n.Offset = offset
+// 	reader := bytes.NewReader(data)
+
+// 	var isLeafByte byte
+// 	var numKeysInt32 int32
+
+// 	// Read fields in the same order they were written
+// 	binary.Read(reader, binary.LittleEndian, &isLeafByte)
+// 	binary.Read(reader, binary.LittleEndian, &numKeysInt32)
+// 	binary.Read(reader, binary.LittleEndian, n.Keys)
+// 	binary.Read(reader, binary.LittleEndian, n.Values)
+// 	binary.Read(reader, binary.LittleEndian, n.Children)
+
+// 	n.IsLeaf = (isLeafByte == 1)
+// 	n.NumKeys = int(numKeysInt32)
+// 	n.file = t.file // Assign file handle
+
+// 	// Basic validation
+// 	if n.NumKeys < 0 || n.NumKeys > 2*order-1 {
+// 		return nil, fmt.Errorf("invalid NumKeys (%d) read from node at offset %d", n.NumKeys, offset)
+// 	}
+
+// 	return n, nil
+// }
+
+// // readNode reads a node from the file at the given offset
+// func (t *BTree) readNode(offset int64) (*Node, error) {
+// 	if offset <= 0 || offset%pageSize != 0 { // Basic offset check (0 is header)
+// 		// Allow headerSize as first possible offset if header isn't page aligned
+// 		if offset != headerSize && headerSize%pageSize != 0 {
+// 			return nil, fmt.Errorf("%w: offset %d (headerSize %d, pageSize %d)", ErrInvalidOffset, offset, headerSize, pageSize)
+// 		}
+// 		if offset < headerSize && headerSize%pageSize == 0 {
+// 			return nil, fmt.Errorf("%w: offset %d < headerSize %d", ErrInvalidOffset, offset, headerSize)
+// 		}
+// 	}
+// 	if offset >= t.Header.NextFreeOffset {
+// 		return nil, fmt.Errorf("%w: offset %d >= nextFreeOffset %d", ErrInvalidOffset, offset, t.Header.NextFreeOffset)
+// 	}
+
+// 	data := make([]byte, pageSize)
+// 	_, err := t.file.ReadAt(data, offset)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to read node at offset %d: %w", offset, err)
+// 	}
+
+// 	node, err := deserializeNode(data, t, offset)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to deserialize node at offset %d: %w", offset, err)
+// 	}
+// 	return node, nil
+// }
+
+// // writeNode writes a node to the file at its offset
+// func (n *Node) writeNode() error {
+// 	if n.Offset <= 0 {
+// 		return fmt.Errorf("cannot write node with invalid offset %d", n.Offset)
+// 	}
+// 	if n.Offset%pageSize != 0 && n.Offset != headerSize { // Allow headerSize if not page aligned
+// 		return fmt.Errorf("%w: cannot write node to non-page-aligned offset %d (pageSize %d)", ErrInvalidOffset, n.Offset, pageSize)
+// 	}
+// 	if n.Offset < headerSize && headerSize%pageSize == 0 {
+// 		return fmt.Errorf("%w: cannot write node overlapping header at offset %d", ErrInvalidOffset, n.Offset)
+// 	}
+
+// 	data, err := n.serialize()
+// 	if err != nil {
+// 		return fmt.Errorf("failed to serialize node for offset %d: %w", n.Offset, err)
+// 	}
+
+// 	_, err = n.file.WriteAt(data, n.Offset)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to write node to offset %d: %w", n.Offset, err)
+// 	}
+// 	// Consider fsync here for durability, but it's slow. Omitted for simplicity.
+// 	// n.file.Sync()
+// 	return nil
+// }
+
+// // allocateNode reserves space for a new node and returns its offset
+// func (t *BTree) allocateNode() (int64, error) {
+// 	offset := t.Header.NextFreeOffset
+// 	t.Header.NextFreeOffset += int64(pageSize) // Increment for the next allocation
+
+// 	// Persist the updated NextFreeOffset in the header *immediately*
+// 	// In a real system, this needs careful handling with WAL etc.
+// 	err := t.writeHeader()
+// 	if err != nil {
+// 		// Attempt to revert in-memory state? Complex. For now, just return error.
+// 		t.Header.NextFreeOffset -= int64(pageSize)
+// 		return -1, fmt.Errorf("failed to update header after allocating offset %d: %w", offset, err)
+// 	}
+
+// 	// Optional: Write empty/default data to the allocated space to reserve it.
+// 	// blankNode := make([]byte, pageSize)
+// 	// _, err = t.file.WriteAt(blankNode, offset)
+// 	// if err != nil {
+// 	//     return -1, fmt.Errorf("failed to blank out allocated node space at %d: %w", offset, err)
+// 	// }
+
+// 	return offset, nil
+// }
+
+// // --- B-Tree Core Logic ---
+
+// // NewBTree creates or opens a B-Tree backed by the given file
+// func NewBTree(filename string) (*BTree, error) {
+// 	// Open file with read/write permissions, create if it doesn't exist
+// 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0666)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to open file %s: %w", filename, err)
+// 	}
+
+// 	t := &BTree{
+// 		file: file,
+// 		// Header initialized later
+// 	}
+
+// 	fileInfo, err := file.Stat()
+// 	if err != nil {
+// 		file.Close()
+// 		return nil, fmt.Errorf("failed to get file info for %s: %w", filename, err)
+// 	}
+
+// 	if fileInfo.Size() == 0 {
+// 		// New file: Initialize header and root node
+// 		fmt.Println("Initializing new B-Tree file...")
+// 		t.Header.Order = int32(order)
+// 		// Start first node *after* the header
+// 		if headerSize%pageSize == 0 {
+// 			t.Header.NextFreeOffset = int64(headerSize)
+// 		} else {
+// 			// Align first node to next page boundary after header
+// 			t.Header.NextFreeOffset = ((int64(headerSize) / int64(pageSize)) + 1) * int64(pageSize)
+// 		}
+// 		t.Header.RootOffset = -1 // Indicate no root yet
+
+// 		// Allocate space for the root node
+// 		rootOffset, err := t.allocateNode() // This also writes the initial header
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to allocate initial root node: %w", err)
+// 		}
+
+// 		// Create the root node (leaf, empty)
+// 		root := newNode(t, true)
+// 		root.Offset = rootOffset
+// 		err = root.writeNode()
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to write initial root node: %w", err)
+// 		}
+
+// 		// Update header with root offset and write again
+// 		t.Header.RootOffset = rootOffset
+// 		err = t.writeHeader()
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to write final header: %w", err)
+// 		}
+// 		fmt.Printf("New B-Tree created. Root at %d, Next free at %d\n", t.Header.RootOffset, t.Header.NextFreeOffset)
+
+// 	} else {
+// 		// Existing file: Read header
+// 		fmt.Println("Opening existing B-Tree file...")
+// 		err = t.readHeader()
+// 		if err != nil {
+// 			file.Close()
+// 			return nil, fmt.Errorf("failed to read header from %s: %w", filename, err)
+// 		}
+// 		if t.Header.RootOffset <= 0 {
+// 			file.Close()
+// 			return nil, fmt.Errorf("invalid root offset %d found in header", t.Header.RootOffset)
+// 		}
+// 		fmt.Printf("Opened B-Tree. Root at %d, Next free at %d\n", t.Header.RootOffset, t.Header.NextFreeOffset)
+// 	}
+
+// 	return t, nil
+// }
+
+// // Close closes the B-Tree file
+// func (t *BTree) Close() error {
+// 	// Potentially flush caches here
+// 	if t.file != nil {
+// 		// Maybe write header one last time?
+// 		// t.writeHeader()
+// 		return t.file.Close()
+// 	}
+// 	return nil
+// }
+
+// // Search finds the value for a given key
+// func (t *BTree) Search(key int64) (int64, error) {
+// 	if t.Header.RootOffset <= 0 {
+// 		return 0, ErrNotFound // Empty tree
+// 	}
+// 	root, err := t.readNode(t.Header.RootOffset)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("failed to read root node: %w", err)
+// 	}
+// 	return root.searchKey(key)
+// }
+
+// // searchKey is a recursive helper for searching within a node's subtree
+// func (n *Node) searchKey(key int64) (int64, error) {
+// 	// Find the first key index >= key
+// 	i := 0
+// 	for i < n.NumKeys && key > n.Keys[i] {
+// 		i++
+// 	}
+
+// 	// Check if key is found at index i
+// 	if i < n.NumKeys && key == n.Keys[i] {
+// 		// In this simple implementation, values are only meaningful in leaves
+// 		// If we allowed values in internal nodes, we'd return n.Values[i] here.
+// 		// For now, we must continue searching until a leaf if it's internal.
+// 		// A common B+ Tree variant stores *all* values in leaves. Let's assume that.
+// 		if n.IsLeaf {
+// 			return n.Values[i], nil
+// 		}
+// 		// If key found in internal node, it acts as a separator. The actual
+// 		// value would typically be in the leaf reached via children[i+1] or
+// 		// by traversing down to find the predecessor/successor in a leaf.
+// 		// For simplicity here, we'll search the right subtree if found internally.
+// 		// If it exists, it *must* be in the subtree n.Children[i+1] or n.Children[i]
+// 		// depending on design. Let's search left first for this example.
+// 		// A more robust implementation might need to handle this better.
+// 		if n.Children[i] > 0 {
+// 			child, err := n.tree.readNode(n.Children[i])
+// 			if err != nil {
+// 				return 0, fmt.Errorf("search: failed to read child at %d: %w", n.Children[i], err)
+// 			}
+// 			return child.searchKey(key) // Search for predecessor essentially
+// 		} else {
+// 			// Fallback to right if left is somehow invalid (shouldn't happen)
+// 			if i+1 < 2*order && n.Children[i+1] > 0 {
+// 				child, err := n.tree.readNode(n.Children[i+1])
+// 				if err != nil {
+// 					return 0, fmt.Errorf("search: failed to read child at %d: %w", n.Children[i+1], err)
+// 				}
+// 				return child.searchKey(key)
+// 			} else {
+// 				// Should not happen in a valid tree if key is internal
+// 				return 0, fmt.Errorf("internal error: key %d found in internal node %d with no valid children path", key, n.Offset)
+// 			}
+// 		}
+// 	}
+
+// 	// If key is not found and this is a leaf node, it doesn't exist
+// 	if n.IsLeaf {
+// 		return 0, ErrNotFound
+// 	}
+
+// 	// Key not found here, descend to the appropriate child
+// 	childOffset := n.Children[i]
+// 	if childOffset <= 0 {
+// 		// This indicates a corrupted tree structure
+// 		return 0, fmt.Errorf("internal error: invalid child offset found at index %d in node %d", i, n.Offset)
+// 	}
+
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("search: failed to read child node at %d: %w", childOffset, err)
+// 	}
+// 	return child.searchKey(key)
+// }
+
+// // Insert adds a key-value pair to the B-Tree
+// func (t *BTree) Insert(key, value int64) error {
+// 	if t.Header.RootOffset <= 0 {
+// 		return errors.New("tree not properly initialized") // Should have a root
+// 	}
+
+// 	root, err := t.readNode(t.Header.RootOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("insert: failed to read root node: %w", err)
+// 	}
+
+// 	// If root is full, split it
+// 	if root.NumKeys == 2*order-1 {
+// 		// Create a new root node
+// 		newRoot := newNode(t, false) // New root is internal
+// 		newRootOffset, err := t.allocateNode()
+// 		if err != nil {
+// 			return fmt.Errorf("insert: failed to allocate node for new root: %w", err)
+// 		}
+// 		newRoot.Offset = newRootOffset
+// 		newRoot.Children[0] = root.Offset // Old root becomes child of new root
+
+// 		// Split the old root and move one key to the new root
+// 		err = newRoot.splitChild(0, root) // Split the child at index 0 (the old root)
+// 		if err != nil {
+// 			return fmt.Errorf("insert: failed to split full root: %w", err)
+// 		}
+
+// 		// New root is written by splitChild, now update header
+// 		t.Header.RootOffset = newRootOffset
+// 		err = t.writeHeader()
+// 		if err != nil {
+// 			// Critical error: header update failed after structure change
+// 			return fmt.Errorf("CRITICAL: failed to update header to new root offset %d: %w", newRootOffset, err)
+// 		}
+
+// 		// Decide which child of the new root to insert into
+// 		// Use the updated newRoot read from disk after split? Safer.
+// 		newRoot, err = t.readNode(newRootOffset) // Re-read after split
+// 		if err != nil {
+// 			return fmt.Errorf("insert: failed to re-read new root node after split: %w", err)
+// 		}
+// 		if key < newRoot.Keys[0] {
+// 			err = newRoot.insertNonFull(key, value) // Insert into the first child
+// 		} else {
+// 			err = newRoot.insertNonFull(key, value) // insertNonFull will find correct child
+// 		}
+// 		if err != nil {
+// 			return err // Propagate insertion error
+// 		}
+
+// 	} else {
+// 		// Root is not full, insert directly
+// 		err = root.insertNonFull(key, value)
+// 		if err != nil {
+// 			return err // Propagate insertion error
+// 		}
+// 	}
+
+// 	return nil // Success
+// }
+
+// // insertNonFull inserts a key-value pair into a non-full node
+// // Assumes the current node 'n' is not full
+// func (n *Node) insertNonFull(key, value int64) error {
+// 	i := n.NumKeys - 1 // Start from the rightmost key
+
+// 	if n.IsLeaf {
+// 		// Find position for new key, shifting larger keys to the right
+// 		for i >= 0 && key < n.Keys[i] {
+// 			n.Keys[i+1] = n.Keys[i]
+// 			n.Values[i+1] = n.Values[i]
+// 			i--
+// 		}
+// 		// Check for duplicates before inserting
+// 		if i >= 0 && key == n.Keys[i] {
+// 			return fmt.Errorf("%w: key %d already present in leaf node %d", ErrKeyExists, key, n.Offset)
+// 		}
+
+// 		// Insert the new key and value
+// 		n.Keys[i+1] = key
+// 		n.Values[i+1] = value
+// 		n.NumKeys++
+
+// 		// Write the updated node back to disk
+// 		return n.writeNode() // Persist changes
+
+// 	} else { // Internal node
+// 		// Find the child to descend into
+// 		for i >= 0 && key < n.Keys[i] {
+// 			i--
+// 		}
+// 		i++ // Descend into child i
+
+// 		// Read the child node
+// 		childOffset := n.Children[i]
+// 		if childOffset <= 0 {
+// 			return fmt.Errorf("internal error: invalid child offset %d at index %d in node %d", childOffset, i, n.Offset)
+// 		}
+// 		child, err := n.tree.readNode(childOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("insertNonFull: failed to read child node at %d: %w", childOffset, err)
+// 		}
+
+// 		// If the child is full, split it first
+// 		if child.NumKeys == 2*order-1 {
+// 			err = n.splitChild(i, child) // This writes parent 'n' and the two new children
+// 			if err != nil {
+// 				return fmt.Errorf("insertNonFull: failed during split: %w", err)
+// 			}
+
+// 			// After split, key k might belong to the new child created on the right
+// 			// Parent 'n' was modified by splitChild, need its new state.
+// 			// We could re-read 'n', but splitChild should have updated it in memory correctly.
+// 			// Let's assume 'n' is up-to-date in memory after splitChild.
+// 			if key > n.Keys[i] {
+// 				i++                         // Key goes into the new right child
+// 				childOffset = n.Children[i] // Get offset of the *new* right child
+// 				if childOffset <= 0 {
+// 					return fmt.Errorf("internal error: invalid child offset %d after split at index %d in node %d", childOffset, i, n.Offset)
+// 				}
+// 				child, err = n.tree.readNode(childOffset) // Read the new child node
+// 				if err != nil {
+// 					return fmt.Errorf("insertNonFull: failed to read NEW child node at %d after split: %w", childOffset, err)
+// 				}
+// 			} else {
+// 				// Key still goes into the original (now smaller) left child
+// 				childOffset = n.Children[i]
+// 				if childOffset <= 0 {
+// 					return fmt.Errorf("internal error: invalid child offset %d after split at index %d in node %d", childOffset, i, n.Offset)
+// 				}
+// 				child, err = n.tree.readNode(childOffset) // Re-read the modified original child
+// 				if err != nil {
+// 					return fmt.Errorf("insertNonFull: failed to read MODIFIED child node at %d after split: %w", childOffset, err)
+// 				}
+// 			}
+// 		}
+// 		// Now the appropriate child is guaranteed not to be full
+// 		return child.insertNonFull(key, value)
+// 	}
+// }
+
+// // splitChild splits a full child 'child' of the current node 'n' at index 'childIndex'
+// // Assumes 'n' is not full, and 'child' (n.Children[childIndex]) is full.
+// func (n *Node) splitChild(childIndex int, child *Node) error {
+// 	if child.NumKeys != 2*order-1 {
+// 		return fmt.Errorf("attempted to split non-full child node %d", child.Offset)
+// 	}
+
+// 	// Create a new node to store the upper half of the keys/children from 'child'
+// 	newNode := newNode(n.tree, child.IsLeaf)
+// 	newNodeOffset, err := n.tree.allocateNode()
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild: failed to allocate node for split: %w", err)
+// 	}
+// 	newNode.Offset = newNodeOffset
+// 	newNode.NumKeys = order - 1 // t-1 keys
+
+// 	// Copy the last (t-1) keys and values from 'child' to 'newNode'
+// 	for j := 0; j < order-1; j++ {
+// 		newNode.Keys[j] = child.Keys[j+order]
+// 		newNode.Values[j] = child.Values[j+order] // Copy values regardless of leaf/internal for simplicity
+// 	}
+
+// 	// If 'child' is an internal node, copy the last 't' children offsets
+// 	if !child.IsLeaf {
+// 		for j := 0; j < order; j++ {
+// 			newNode.Children[j] = child.Children[j+order]
+// 		}
+// 	}
+
+// 	// Reduce the number of keys in the original 'child' node
+// 	child.NumKeys = order - 1 // t-1 keys remain
+
+// 	// Make space in the parent node 'n' for the new child pointer
+// 	for j := n.NumKeys; j > childIndex; j-- {
+// 		n.Children[j+1] = n.Children[j]
+// 	}
+// 	// Link the new node as a child of 'n'
+// 	n.Children[childIndex+1] = newNode.Offset
+
+// 	// Make space in the parent node 'n' for the middle key from 'child'
+// 	for j := n.NumKeys - 1; j >= childIndex; j-- {
+// 		n.Keys[j+1] = n.Keys[j]
+// 		n.Values[j+1] = n.Values[j] // Move parent values too
+// 	}
+// 	// Move the middle key (and its value if needed) from 'child' up to 'n'
+// 	n.Keys[childIndex] = child.Keys[order-1]
+// 	n.Values[childIndex] = child.Values[order-1] // Copy value up - might not be used if internal
+// 	n.NumKeys++
+
+// 	// Write all three modified nodes to disk
+// 	err = n.writeNode() // Parent node
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild: failed to write parent node %d: %w", n.Offset, err)
+// 	}
+// 	err = child.writeNode() // Original child (now smaller)
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild: failed to write original child node %d: %w", child.Offset, err)
+// 	}
+// 	err = newNode.writeNode() // New child node
+// 	if err != nil {
+// 		return fmt.Errorf("splitChild: failed to write new child node %d: %w", newNode.Offset, err)
+// 	}
+
+// 	return nil
+// }
+
+// // Delete removes a key from the B-Tree.
+// // NOTE: B-Tree deletion is complex. This is a simplified implementation.
+// func (t *BTree) Delete(key int64) error {
+// 	if t.Header.RootOffset <= 0 {
+// 		return ErrNotFound // Or error if appropriate
+// 	}
+
+// 	root, err := t.readNode(t.Header.RootOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("delete: failed to read root node: %w", err)
+// 	}
+
+// 	err = root.deleteKey(key)
+// 	if err != nil {
+// 		// If deletion resulted in an empty root (but not a leaf root), update root pointer
+// 		if root.NumKeys == 0 && !root.IsLeaf && root.Children[0] > 0 {
+// 			fmt.Printf("Root node %d became empty, promoting child %d as new root\n", root.Offset, root.Children[0])
+// 			t.Header.RootOffset = root.Children[0]
+// 			// Ideally, we should free the old root's page here. Omitted for simplicity.
+// 			if headerErr := t.writeHeader(); headerErr != nil {
+// 				return fmt.Errorf("CRITICAL: failed to update root offset after deletion: %w", headerErr)
+// 			}
+// 			// Return the original deletion error if it wasn't just about the root becoming empty implicitly
+// 			if !errors.Is(err, ErrNotFound) { // Example check, might need specific error type
+// 				return err
+// 			}
+// 			return nil // Root update successful, original key was deleted
+// 		} else if root.NumKeys == 0 && root.IsLeaf {
+// 			// Tree is now completely empty. Keep the empty leaf root.
+// 			if !errors.Is(err, ErrNotFound) {
+// 				return err
+// 			} // Return actual error if key wasnt the last one
+// 			return nil // Successfully deleted last key
+// 		}
+// 		// Propagate other errors (like ErrNotFound)
+// 		return err
+// 	}
+
+// 	// Handle case where the root itself might underflow (if it's a leaf and becomes empty)
+// 	// This case is partially handled above when root becomes non-leaf and empty.
+// 	// If root is a leaf and becomes empty, it remains the root but empty.
+
+// 	return nil // Success
+// }
+
+// // deleteKey recursively finds and deletes a key starting from node 'n'
+// func (n *Node) deleteKey(key int64) error {
+// 	idx := n.findKeyIndex(key)
+
+// 	if idx < n.NumKeys && n.Keys[idx] == key { // Key found in this node
+// 		if n.IsLeaf {
+// 			// Case 1: Key found in a leaf node
+// 			return n.deleteFromLeaf(idx)
+// 		} else {
+// 			// Case 2: Key found in an internal node
+// 			return n.deleteFromInternal(idx)
+// 		}
+// 	} else { // Key not found in this node
+// 		if n.IsLeaf {
+// 			// Case 3a: Key not found and it's a leaf node
+// 			return ErrNotFound
+// 		}
+
+// 		// Case 3b: Key not found, descend into the appropriate child
+// 		// Determine if the child we're descending into has enough keys (>= t)
+// 		descendIdx := idx // Child to descend into is children[idx]
+// 		childOffset := n.Children[descendIdx]
+// 		if childOffset <= 0 {
+// 			return fmt.Errorf("delete internal error: invalid child offset at %d", descendIdx)
+// 		}
+
+// 		child, err := n.tree.readNode(childOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("deleteKey: failed to read child %d: %w", childOffset, err)
+// 		}
+
+// 		// If the child has minimum keys (t-1), we need to ensure it has at least 't' keys
+// 		// before descending, by borrowing or merging.
+// 		if child.NumKeys < order { // Needs child.NumKeys == order - 1 check
+// 			err := n.ensureChildHasEnoughKeys(descendIdx) // This modifies n, child, siblings
+// 			if err != nil {
+// 				return fmt.Errorf("deleteKey: failed to ensure child %d has enough keys: %w", childOffset, err)
+// 			}
+// 			// After ensuring, the key might have moved into parent 'n' or a different child
+// 			// Re-read 'n' and find the correct child again? Safer but slower.
+// 			// For simplicity, assume the descent logic remains correct or is adjusted within ensureChildHasEnoughKeys
+// 			// Re-read the potentially modified/replaced child node.
+// 			// The offset might have changed if a merge happened. The offset in n.Children[descendIdx] should be correct.
+// 			currentChildOffset := n.Children[descendIdx] // Get potentially updated offset
+// 			if currentChildOffset <= 0 {
+// 				return fmt.Errorf("delete internal error: invalid child offset at %d after ensure", descendIdx)
+// 			}
+// 			child, err = n.tree.readNode(currentChildOffset)
+// 			if err != nil {
+// 				return fmt.Errorf("deleteKey: failed to read child %d after ensure: %w", currentChildOffset, err)
+// 			}
+// 		}
+
+// 		// Now descend into the child (which has at least 't' keys)
+// 		return child.deleteKey(key)
+// 	}
+// }
+
+// // findKeyIndex returns the index 'i' such that keys[i] >= key, or numKeys if key is > all keys.
+// func (n *Node) findKeyIndex(key int64) int {
+// 	// Binary search could be used here for larger nodes
+// 	i := 0
+// 	for i < n.NumKeys && key > n.Keys[i] {
+// 		i++
+// 	}
+// 	return i
+// }
+
+// // --- Deletion Helper Functions ---
+
+// // deleteFromLeaf removes the key at index 'idx' from a leaf node 'n'
+// func (n *Node) deleteFromLeaf(idx int) error {
+// 	if !n.IsLeaf {
+// 		return errors.New("deleteFromLeaf called on internal node")
+// 	}
+// 	if idx < 0 || idx >= n.NumKeys {
+// 		return errors.New("invalid index for deleteFromLeaf")
+// 	}
+
+// 	// Shift keys and values to the left
+// 	copy(n.Keys[idx:], n.Keys[idx+1:n.NumKeys])
+// 	copy(n.Values[idx:], n.Values[idx+1:n.NumKeys])
+// 	n.NumKeys--
+// 	// Clear the last element (optional, good practice)
+// 	n.Keys[n.NumKeys] = 0
+// 	n.Values[n.NumKeys] = 0
+
+// 	// Write changes back to disk
+// 	return n.writeNode()
+// 	// Note: Underflow is handled by the caller (deleteKey) *before* descending
+// }
+
+// // deleteFromInternal removes the key at index 'idx' from an internal node 'n'
+// func (n *Node) deleteFromInternal(idx int) error {
+// 	if n.IsLeaf {
+// 		return errors.New("deleteFromInternal called on leaf node")
+// 	}
+// 	if idx < 0 || idx >= n.NumKeys {
+// 		return errors.New("invalid index for deleteFromInternal")
+// 	}
+
+// 	keyToDelete := n.Keys[idx]
+// 	leftOff := n.Children[idx]
+// 	rightOff := n.Children[idx+1]
+
+// 	if leftOff <= 0 || rightOff <= 0 {
+// 		return fmt.Errorf("internal error: invalid child offsets around index %d", idx)
+// 	}
+
+// 	leftNode, err := n.tree.readNode(leftOff)
+// 	if err != nil {
+// 		return fmt.Errorf("deleteInternal: failed read left child %d: %w", leftOff, err)
+// 	}
+// 	rightNode, err := n.tree.readNode(rightOff)
+// 	if err != nil {
+// 		return fmt.Errorf("deleteInternal: failed read right child %d: %w", rightOff, err)
+// 	}
+
+// 	if leftNode.NumKeys >= order {
+// 		// Case 2a: Left child has >= t keys. Find predecessor.
+// 		predKey, predVal, err := leftNode.findPredecessor()
+// 		if err != nil {
+// 			return fmt.Errorf("deleteInternal: failed finding predecessor for key %d: %w", keyToDelete, err)
+// 		}
+
+// 		// Replace keyToDelete with predecessor
+// 		n.Keys[idx] = predKey
+// 		n.Values[idx] = predVal // Update value too, might be needed if searching internal nodes
+// 		if err := n.writeNode(); err != nil {
+// 			return fmt.Errorf("deleteInternal: failed write parent after replace with pred: %w", err)
+// 		}
+
+// 		// Recursively delete predecessor from left child
+// 		return leftNode.deleteKey(predKey)
+
+// 	} else if rightNode.NumKeys >= order {
+// 		// Case 2b: Right child has >= t keys. Find successor.
+// 		succKey, succVal, err := rightNode.findSuccessor()
+// 		if err != nil {
+// 			return fmt.Errorf("deleteInternal: failed finding successor for key %d: %w", keyToDelete, err)
+// 		}
+
+// 		// Replace keyToDelete with successor
+// 		n.Keys[idx] = succKey
+// 		n.Values[idx] = succVal // Update value too
+// 		if err := n.writeNode(); err != nil {
+// 			return fmt.Errorf("deleteInternal: failed write parent after replace with succ: %w", err)
+// 		}
+
+// 		// Recursively delete successor from right child
+// 		return rightNode.deleteKey(succKey)
+
+// 	} else {
+// 		// Case 2c: Both children have t-1 keys. Merge right child into left child.
+// 		// Merge involves moving the key from the parent node down.
+// 		mergedNode, err := n.mergeChildren(idx) // This handles writing nodes
+// 		if err != nil {
+// 			return fmt.Errorf("deleteInternal: failed merging children at index %d: %w", idx, err)
+// 		}
+// 		// The key to delete is now in the merged node. Recursively delete it.
+// 		// Note: The original keyToDelete is now *in* the mergedNode.
+// 		return mergedNode.deleteKey(keyToDelete)
+// 	}
+// }
+
+// // findPredecessor finds the largest key in the subtree rooted at 'n'
+// func (n *Node) findPredecessor() (key, value int64, err error) {
+// 	curr := n
+// 	for !curr.IsLeaf {
+// 		childOffset := curr.Children[curr.NumKeys] // Go to the rightmost child
+// 		if childOffset <= 0 {
+// 			return 0, 0, errors.New("internal error finding predecessor: invalid child offset")
+// 		}
+// 		child, err := n.tree.readNode(childOffset)
+// 		if err != nil {
+// 			return 0, 0, fmt.Errorf("findPredecessor: failed read node %d: %w", childOffset, err)
+// 		}
+// 		curr = child
+// 	}
+// 	if curr.NumKeys == 0 {
+// 		return 0, 0, errors.New("internal error finding predecessor: leaf node is empty")
+// 	}
+// 	// Return the rightmost key/value from the leaf
+// 	return curr.Keys[curr.NumKeys-1], curr.Values[curr.NumKeys-1], nil
+// }
+
+// // findSuccessor finds the smallest key in the subtree rooted at 'n'
+// func (n *Node) findSuccessor() (key, value int64, err error) {
+// 	curr := n
+// 	for !curr.IsLeaf {
+// 		childOffset := curr.Children[0] // Go to the leftmost child
+// 		if childOffset <= 0 {
+// 			return 0, 0, errors.New("internal error finding successor: invalid child offset")
+// 		}
+// 		child, err := n.tree.readNode(childOffset)
+// 		if err != nil {
+// 			return 0, 0, fmt.Errorf("findSuccessor: failed read node %d: %w", childOffset, err)
+// 		}
+// 		curr = child
+// 	}
+// 	if curr.NumKeys == 0 {
+// 		return 0, 0, errors.New("internal error finding successor: leaf node is empty")
+// 	}
+// 	// Return the leftmost key/value from the leaf
+// 	return curr.Keys[0], curr.Values[0], nil
+// }
+
+// // ensureChildHasEnoughKeys makes sure child node at index 'childIdx' has at least 't' keys.
+// // It borrows from a sibling or merges if necessary. Modifies parent 'n' and siblings.
+// func (n *Node) ensureChildHasEnoughKeys(childIdx int) error {
+// 	childOffset := n.Children[childIdx]
+// 	if childOffset <= 0 {
+// 		return errors.New("ensureChildHasEnoughKeys internal error: invalid child offset")
+// 	}
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("ensureChildHasEnoughKeys: failed read child %d: %w", childOffset, err)
+// 	}
+
+// 	if child.NumKeys >= order {
+// 		return nil
+// 	} // Already has enough keys
+
+// 	// Try borrowing from left sibling
+// 	if childIdx > 0 {
+// 		leftSiblingOffset := n.Children[childIdx-1]
+// 		if leftSiblingOffset <= 0 {
+// 			return errors.New("ensureChildHasEnoughKeys internal error: invalid left sibling offset")
+// 		}
+// 		leftSibling, err := n.tree.readNode(leftSiblingOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("ensureChildHasEnoughKeys: failed read left sibling %d: %w", leftSiblingOffset, err)
+// 		}
+
+// 		if leftSibling.NumKeys >= order {
+// 			fmt.Printf("Borrowing from left sibling (%d keys) for child (%d keys) at index %d\n", leftSibling.NumKeys, child.NumKeys, childIdx)
+// 			return n.borrowFromLeftSibling(childIdx) // This writes nodes
+// 		}
+// 	}
+
+// 	// Try borrowing from right sibling
+// 	if childIdx < n.NumKeys { // Use n.NumKeys because there are n.NumKeys+1 children ptrs conceptually
+// 		rightSiblingOffset := n.Children[childIdx+1]
+// 		if rightSiblingOffset <= 0 {
+// 			return errors.New("ensureChildHasEnoughKeys internal error: invalid right sibling offset")
+// 		}
+// 		rightSibling, err := n.tree.readNode(rightSiblingOffset)
+// 		if err != nil {
+// 			return fmt.Errorf("ensureChildHasEnoughKeys: failed read right sibling %d: %w", rightSiblingOffset, err)
+// 		}
+
+// 		if rightSibling.NumKeys >= order {
+// 			fmt.Printf("Borrowing from right sibling (%d keys) for child (%d keys) at index %d\n", rightSibling.NumKeys, child.NumKeys, childIdx)
+// 			return n.borrowFromRightSibling(childIdx) // This writes nodes
+// 		}
+// 	}
+
+// 	// If borrowing failed, merge child with a sibling
+// 	fmt.Printf("Merging child at index %d (%d keys)\n", childIdx, child.NumKeys)
+// 	if childIdx > 0 {
+// 		// Merge child with left sibling
+// 		_, err := n.mergeChildren(childIdx - 1) // Merge child[idx-1] and child[idx]
+// 		return err
+// 	} else {
+// 		// Merge child with right sibling (child is child[0])
+// 		_, err := n.mergeChildren(childIdx) // Merge child[idx] and child[idx+1]
+// 		return err
+// 	}
+// }
+
+// // borrowFromLeftSibling moves a key from parent 'n' down to child 'cIdx' and a key from left sibling 'lIdx' up to parent 'n'.
+// func (n *Node) borrowFromLeftSibling(cIdx int) error {
+// 	lIdx := cIdx - 1
+// 	childOffset := n.Children[cIdx]
+// 	leftSiblingOffset := n.Children[lIdx]
+
+// 	if childOffset <= 0 || leftSiblingOffset <= 0 {
+// 		return errors.New("borrowLeft internal error: invalid offsets")
+// 	}
+
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowLeft: fail read child %d: %w", childOffset, err)
+// 	}
+// 	leftSibling, err := n.tree.readNode(leftSiblingOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowLeft: fail read left sibling %d: %w", leftSiblingOffset, err)
+// 	}
+
+// 	if leftSibling.NumKeys < order {
+// 		return errors.New("borrowLeft internal error: left sibling has too few keys")
+// 	}
+
+// 	// Make space in child for the new key/child from parent/sibling
+// 	// Shift keys/values right in child
+// 	copy(child.Keys[1:], child.Keys[:child.NumKeys])
+// 	copy(child.Values[1:], child.Values[:child.NumKeys])
+// 	if !child.IsLeaf {
+// 		copy(child.Children[1:], child.Children[:child.NumKeys+1])
+// 	}
+
+// 	// Move key from parent down to child's first position
+// 	child.Keys[0] = n.Keys[lIdx]
+// 	child.Values[0] = n.Values[lIdx] // Copy value too
+// 	child.NumKeys++
+
+// 	// Move the largest key from left sibling up to parent
+// 	n.Keys[lIdx] = leftSibling.Keys[leftSibling.NumKeys-1]
+// 	n.Values[lIdx] = leftSibling.Values[leftSibling.NumKeys-1]
+
+// 	// If internal node, move the largest child pointer from left sibling to child's first position
+// 	if !child.IsLeaf {
+// 		if !leftSibling.IsLeaf {
+// 			child.Children[0] = leftSibling.Children[leftSibling.NumKeys]
+// 			leftSibling.Children[leftSibling.NumKeys] = 0 // Clear old ptr
+// 		} else {
+// 			return errors.New("borrowLeft internal error: trying to borrow child pointer from a leaf sibling")
+// 		}
+// 	}
+
+// 	// Decrease keys in left sibling
+// 	leftSibling.NumKeys--
+// 	leftSibling.Keys[leftSibling.NumKeys] = 0   // Clear old key
+// 	leftSibling.Values[leftSibling.NumKeys] = 0 // Clear old value
+
+// 	// Write changes
+// 	if err := n.writeNode(); err != nil {
+// 		return err
+// 	}
+// 	if err := child.writeNode(); err != nil {
+// 		return err
+// 	}
+// 	if err := leftSibling.writeNode(); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
+
+// // borrowFromRightSibling moves a key from parent 'n' down to child 'cIdx' and a key from right sibling 'rIdx' up to parent 'n'.
+// func (n *Node) borrowFromRightSibling(cIdx int) error {
+// 	rIdx := cIdx + 1
+// 	childOffset := n.Children[cIdx]
+// 	rightSiblingOffset := n.Children[rIdx]
+
+// 	if childOffset <= 0 || rightSiblingOffset <= 0 {
+// 		return errors.New("borrowRight internal error: invalid offsets")
+// 	}
+
+// 	child, err := n.tree.readNode(childOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowRight: fail read child %d: %w", childOffset, err)
+// 	}
+// 	rightSibling, err := n.tree.readNode(rightSiblingOffset)
+// 	if err != nil {
+// 		return fmt.Errorf("borrowRight: fail read right sibling %d: %w", rightSiblingOffset, err)
+// 	}
+
+// 	if rightSibling.NumKeys < order {
+// 		return errors.New("borrowRight internal error: right sibling has too few keys")
+// 	}
+
+// 	// Move key from parent down to child's last position
+// 	child.Keys[child.NumKeys] = n.Keys[cIdx]
+// 	child.Values[child.NumKeys] = n.Values[cIdx] // Copy value too
+// 	child.NumKeys++
+
+// 	// Move the smallest key from right sibling up to parent
+// 	n.Keys[cIdx] = rightSibling.Keys[0]
+// 	n.Values[cIdx] = rightSibling.Values[0]
+
+// 	// If internal node, move the smallest child pointer from right sibling to child's last position
+// 	if !child.IsLeaf {
+// 		if !rightSibling.IsLeaf {
+// 			child.Children[child.NumKeys] = rightSibling.Children[0] // Index is numKeys after increment
+// 		} else {
+// 			return errors.New("borrowRight internal error: trying to borrow child pointer from a leaf sibling")
+// 		}
+// 	}
+
+// 	// Decrease keys in right sibling (shift left)
+// 	copy(rightSibling.Keys[:], rightSibling.Keys[1:rightSibling.NumKeys])
+// 	copy(rightSibling.Values[:], rightSibling.Values[1:rightSibling.NumKeys])
+// 	if !rightSibling.IsLeaf {
+// 		copy(rightSibling.Children[:], rightSibling.Children[1:rightSibling.NumKeys+1])
+// 	}
+// 	rightSibling.NumKeys--
+// 	// Clear last elements
+// 	rightSibling.Keys[rightSibling.NumKeys] = 0
+// 	rightSibling.Values[rightSibling.NumKeys] = 0
+// 	if !rightSibling.IsLeaf {
+// 		rightSibling.Children[rightSibling.NumKeys+1] = 0
+// 	}
+
+// 	// Write changes
+// 	if err := n.writeNode(); err != nil {
+// 		return err
+// 	}
+// 	if err := child.writeNode(); err != nil {
+// 		return err
+// 	}
+// 	if err := rightSibling.writeNode(); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
+
+// // mergeChildren merges child[idx+1] (right) into child[idx] (left).
+// // It also moves a key from parent 'n' down into the merged child.
+// // Returns the merged node (which is the modified left child).
+// func (n *Node) mergeChildren(idx int) (*Node, error) {
+// 	leftOff := n.Children[idx]
+// 	rightOff := n.Children[idx+1]
+// 	keyFromParent := n.Keys[idx]
+// 	valFromParent := n.Values[idx] // Get value too
+
+// 	if leftOff <= 0 || rightOff <= 0 {
+// 		return nil, errors.New("merge internal error: invalid offsets")
+// 	}
+
+// 	leftNode, err := n.tree.readNode(leftOff)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("merge: fail read left child %d: %w", leftOff, err)
+// 	}
+// 	rightNode, err := n.tree.readNode(rightOff)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("merge: fail read right child %d: %w", rightOff, err)
+// 	}
+
+// 	if leftNode.NumKeys >= order || rightNode.NumKeys >= order {
+// 		// This shouldn't happen if called correctly after borrow attempts fail
+// 		return nil, errors.New("merge internal error: one child has enough keys, should have borrowed")
+// 	}
+
+// 	// Move key from parent down to the end of left child's keys
+// 	leftNode.Keys[leftNode.NumKeys] = keyFromParent
+// 	leftNode.Values[leftNode.NumKeys] = valFromParent
+// 	leftNode.NumKeys++
+
+// 	// Copy keys and values from right child to the end of left child
+// 	copy(leftNode.Keys[leftNode.NumKeys:], rightNode.Keys[:rightNode.NumKeys])
+// 	copy(leftNode.Values[leftNode.NumKeys:], rightNode.Values[:rightNode.NumKeys])
+
+// 	// If internal nodes, copy children pointers from right child too
+// 	if !leftNode.IsLeaf {
+// 		if rightNode.IsLeaf {
+// 			return nil, errors.New("merge internal error: merging internal node with leaf node")
+// 		}
+// 		copy(leftNode.Children[leftNode.NumKeys:], rightNode.Children[:rightNode.NumKeys+1])
+// 	}
+// 	leftNode.NumKeys += rightNode.NumKeys // Update final key count
+
+// 	// Remove key and right child pointer from parent 'n'
+// 	// Shift keys/values left in parent
+// 	copy(n.Keys[idx:], n.Keys[idx+1:n.NumKeys])
+// 	copy(n.Values[idx:], n.Values[idx+1:n.NumKeys])
+// 	// Shift child pointers left in parent
+// 	copy(n.Children[idx+1:], n.Children[idx+2:n.NumKeys+1])
+// 	n.NumKeys--
+// 	// Clear trailing elements in parent
+// 	n.Keys[n.NumKeys] = 0
+// 	n.Values[n.NumKeys] = 0
+// 	n.Children[n.NumKeys+1] = 0
+
+// 	// Write changes to parent and merged (left) node
+// 	// NOTE: The right node is now effectively garbage. A real DB would free its page.
+// 	if err := n.writeNode(); err != nil {
+// 		return nil, err
+// 	}
+// 	if err := leftNode.writeNode(); err != nil {
+// 		return nil, err
+// 	}
+
+// 	// We should free rightNode.Offset here in a real implementation.
+// 	fmt.Printf("Merged node %d into node %d. Node %d is now unused (space not reclaimed).\n", rightNode.Offset, leftNode.Offset, rightNode.Offset)
+
+// 	return leftNode, nil // Return the merged node
+// }
+
+// // --- Utility/Debugging Functions ---
+
+// // printTree performs a simple level-order traversal to print node info
+// func (t *BTree) printTree() error {
+// 	fmt.Println("--- B-Tree Structure ---")
+// 	if t.Header.RootOffset <= 0 {
+// 		fmt.Println("(Empty Tree)")
+// 		return nil
+// 	}
+
+// 	queue := []int64{t.Header.RootOffset}
+// 	level := 0
+
+// 	for len(queue) > 0 {
+// 		levelSize := len(queue)
+// 		fmt.Printf("Level %d:\n", level)
+// 		for i := 0; i < levelSize; i++ {
+// 			offset := queue[0]
+// 			queue = queue[1:] // Dequeue
+
+// 			node, err := t.readNode(offset)
+// 			if err != nil {
+// 				fmt.Printf("  Error reading node at offset %d: %v\n", offset, err)
+// 				continue
+// 			}
+
+// 			leafMarker := ""
+// 			if node.IsLeaf {
+// 				leafMarker = " (Leaf)"
+// 			}
+// 			fmt.Printf("  Node Offset: %d, Keys: %d%s, Values: [", node.Offset, node.NumKeys, leafMarker)
+// 			for k := 0; k < node.NumKeys; k++ {
+// 				fmt.Printf("%d:%d", node.Keys[k], node.Values[k])
+// 				if k < node.NumKeys-1 {
+// 					fmt.Print(", ")
+// 				}
+// 			}
+// 			fmt.Print("]")
+// 			if !node.IsLeaf {
+// 				fmt.Print(", Children: [")
+// 				for c := 0; c <= node.NumKeys; c++ { // NumKeys + 1 children
+// 					fmt.Printf("%d", node.Children[c])
+// 					if c < node.NumKeys {
+// 						fmt.Print(", ")
+// 					}
+// 					if node.Children[c] > 0 {
+// 						queue = append(queue, node.Children[c]) // Enqueue child for next level
+// 					}
+// 				}
+// 				fmt.Print("]")
+// 			}
+// 			fmt.Println()
+// 		}
+// 		level++
+// 	}
+// 	fmt.Println("------------------------")
+// 	return nil
+// }
+
+// // --- Main Function (Example Usage) ---
+
+// func main() {
+// 	dbFile := "mybtree.db"
+// 	// Remove existing file for a clean start (optional)
+// 	os.Remove(dbFile)
+
+// 	// Create or open the B-Tree
+// 	tree, err := NewBTree(dbFile)
+// 	if err != nil {
+// 		fmt.Printf("Error creating/opening BTree: %v\n", err)
+// 		return
+// 	}
+// 	defer tree.Close()
+
+// 	fmt.Println("\n--- Inserting Data ---")
+// 	keysToInsert := []int64{10, 20, 5, 15, 25, 30, 12, 18, 22, 28, 3, 7, 11, 13, 17, 19, 21, 23, 27, 29, 35, 40, 1, 50, 55, 60, 45} // Enough to cause splits/merges
+// 	for _, k := range keysToInsert {
+// 		v := k * 10 // Simple value based on key
+// 		fmt.Printf("Inserting %d -> %d\n", k, v)
+// 		err := tree.Insert(k, v)
+// 		if err != nil {
+// 			fmt.Printf("  Error inserting %d: %v\n", k, err)
+// 			// Optional: Print tree state on error for debugging
+// 			// tree.printTree()
+// 		}
+// 	}
+
+// 	fmt.Println("\n--- Tree structure after initial insertions ---")
+// 	tree.printTree()
+
+// 	fmt.Println("\n--- Searching Data ---")
+// 	keysToSearch := []int64{15, 7, 30, 99, 1, 50}
+// 	for _, k := range keysToSearch {
+// 		val, err := tree.Search(k)
+// 		if err != nil {
+// 			fmt.Printf("Search %d: Error - %v\n", k, err)
+// 		} else {
+// 			fmt.Printf("Search %d: Found value %d\n", k, val)
+// 		}
+// 	}
+
+// 	fmt.Println("\n--- Deleting Data ---")
+// 	keysToDelete := []int64{18, 12, 22, 5, 15, 25, 10, 30, 20, 99} // Test different deletion cases
+// 	for _, k := range keysToDelete {
+// 		fmt.Printf("Attempting to delete key %d...\n", k)
+// 		err := tree.Delete(k)
+// 		if err != nil {
+// 			fmt.Printf("  Error deleting %d: %v\n", k, err)
+// 		} else {
+// 			fmt.Printf("  Successfully deleted %d\n", k)
+// 			// Optional: Print tree after each successful deletion
+// 			// tree.printTree()
+// 		}
+// 	}
+
+// 	fmt.Println("\n--- Tree structure after deletions ---")
+// 	tree.printTree()
+
+// 	fmt.Println("\n--- Searching after deletions ---")
+// 	keysToSearchAfterDel := []int64{15, 7, 30, 18, 1, 50}
+// 	for _, k := range keysToSearchAfterDel {
+// 		val, err := tree.Search(k)
+// 		if err != nil {
+// 			fmt.Printf("Search %d: Error - %v\n", k, err)
+// 		} else {
+// 			fmt.Printf("Search %d: Found value %d\n", k, val)
+// 		}
+// 	}
+
+// 	// Example: Insert after delete
+// 	fmt.Println("\n--- Inserting after delete ---")
+// 	err = tree.Insert(18, 180)
+// 	if err != nil {
+// 		fmt.Printf("Error inserting 18 again: %v\n", err)
+// 	} else {
+// 		fmt.Println("Inserted 18 again.")
+// 	}
+
+// 	val, err := tree.Search(18)
+// 	if err != nil {
+// 		fmt.Printf("Search 18: Error - %v\n", err)
+// 	} else {
+// 		fmt.Printf("Search 18: Found value %d\n", val)
+// 	}
+
+// 	fmt.Println("\n--- Final Tree Structure ---")
+// 	tree.printTree()
+
+// 	fmt.Println("\nOperations complete. B-Tree data saved in", dbFile)
+// }
+
+// copilot code
+// package main
+
+// import (
+//     "encoding/gob"
+//     "fmt"
+//     "os"
+// )
+
+// // Node represents a B-tree node.
+// type Node struct {
+//     Keys     []int    // keys stored in this node
+//     Values   []string // associated values
+//     Children []*Node  // child pointers (if non-leaf)
+//     Leaf     bool     // true if node is a leaf
+// }
+
+// // BTree represents the B-tree itself.
+// type BTree struct {
+//     Root *Node // pointer to the root node
+//     T    int   // minimum degree (defines the range for number of keys)
+// }
+
+// // NewBTree returns an empty BTree with a given minimum degree.
+// func NewBTree(t int) *BTree {
+//     return &BTree{
+//         Root: &Node{
+//             Keys:     []int{},
+//             Values:   []string{},
+//             Children: []*Node{},
+//             Leaf:     true,
+//         },
+//         T: t,
+//     }
+// }
+
+// // Save writes the B-tree (using gob encoding) to the given filename.
+// func (tree *BTree) Save(filename string) error {
+//     file, err := os.Create(filename)
+//     if err != nil {
+//         return err
+//     }
+//     defer file.Close()
+
+//     encoder := gob.NewEncoder(file)
+//     return encoder.Encode(tree)
+// }
+
+// // LoadTree reads the B-tree (using gob decoding) from the given filename.
+// func LoadTree(filename string) (*BTree, error) {
+//     file, err := os.Open(filename)
+//     if err != nil {
+//         return nil, err
+//     }
+//     defer file.Close()
+
+//     var tree BTree
+//     decoder := gob.NewDecoder(file)
+//     err = decoder.Decode(&tree)
+//     if err != nil {
+//         return nil, err
+//     }
+//     return &tree, nil
+// }
+
+// // Search recursively looks for a key starting at the given node.
+// // It returns the associated value and true if the key is found.
+// func (n *Node) Search(key int) (string, bool) {
+//     i := 0
+//     for i < len(n.Keys) && key > n.Keys[i] {
+//         i++
+//     }
+//     if i < len(n.Keys) && n.Keys[i] == key {
+//         return n.Values[i], true
+//     }
+//     if n.Leaf {
+//         return "", false
+//     }
+//     return n.Children[i].Search(key)
+// }
+
+// // Insert is the public method to insert a key-value pair into the B-tree.
+// func (t *BTree) Insert(key int, value string) {
+//     r := t.Root
+//     // If root is full, create new root and split.
+//     if len(r.Keys) == 2*t.T-1 {
+//         s := &Node{
+//             Keys:     []int{},
+//             Values:   []string{},
+//             Children: []*Node{r},
+//             Leaf:     false,
+//         }
+//         t.Root = s
+//         t.splitChild(s, 0)
+//         t.insertNonFull(s, key, value)
+//     } else {
+//         t.insertNonFull(r, key, value)
+//     }
+// }
+
+// // insertNonFull inserts a key-value pair into a node that is guaranteed not to be full.
+// func (t *BTree) insertNonFull(n *Node, key int, value string) {
+//     i := len(n.Keys) - 1
+//     if n.Leaf {
+//         // Insert key into leaf node at the correct position.
+//         n.Keys = append(n.Keys, 0)
+//         n.Values = append(n.Values, "")
+//         for i >= 0 && key < n.Keys[i] {
+//             n.Keys[i+1] = n.Keys[i]
+//             n.Values[i+1] = n.Values[i]
+//             i--
+//         }
+//         n.Keys[i+1] = key
+//         n.Values[i+1] = value
+//     } else {
+//         // Find child which is going to have the new key.
+//         for i >= 0 && key < n.Keys[i] {
+//             i--
+//         }
+//         i++
+//         if len(n.Children[i].Keys) == 2*t.T-1 {
+//             // When the child is full, split it.
+//             t.splitChild(n, i)
+//             if key > n.Keys[i] {
+//                 i++
+//             }
+//         }
+//         t.insertNonFull(n.Children[i], key, value)
+//     }
+// }
+
+// // splitChild splits the full child (at index i) of the parent node.
+// func (t *BTree) splitChild(parent *Node, i int) {
+//     t_ := t.T
+//     y := parent.Children[i]
+//     // Create a new node z which will store y.T..end keys.
+//     z := &Node{
+//         Keys:   append([]int(nil), y.Keys[t_:]...),
+//         Values: append([]string(nil), y.Values[t_:]...),
+//         Leaf:   y.Leaf,
+//     }
+//     if !y.Leaf {
+//         z.Children = append([]*Node(nil), y.Children[t_:]...)
+//         y.Children = y.Children[:t_]
+//     }
+//     // The median key and value from y move up to parent.
+//     medianKey := y.Keys[t_-1]
+//     medianValue := y.Values[t_-1]
+//     y.Keys = y.Keys[:t_-1]
+//     y.Values = y.Values[:t_-1]
+
+//     // Insert median key and z pointer into parent at the correct position.
+//     parent.Keys = append(parent.Keys, 0)
+//     parent.Values = append(parent.Values, "")
+//     copy(parent.Keys[i+1:], parent.Keys[i:])
+//     copy(parent.Values[i+1:], parent.Values[i:])
+//     parent.Keys[i] = medianKey
+//     parent.Values[i] = medianValue
+
+//     parent.Children = append(parent.Children, nil)
+//     copy(parent.Children[i+2:], parent.Children[i+1:])
+//     parent.Children[i+1] = z
+// }
+
+// // Delete is the public method to delete a key from the B-tree.
+// func (t *BTree) Delete(key int) {
+//     t.delete(t.Root, key)
+//     // If the root becomes empty (and is not a leaf), update it.
+//     if len(t.Root.Keys) == 0 && !t.Root.Leaf {
+//         t.Root = t.Root.Children[0]
+//     }
+// }
+
+// // delete is a recursive utility to remove key from the subtree rooted at node n.
+// func (t *BTree) delete(n *Node, key int) {
+//     idx := 0
+//     // Find the first key greater than or equal to key.
+//     for idx < len(n.Keys) && key > n.Keys[idx] {
+//         idx++
+//     }
+
+//     // If the found key equals key, then this node is the one to remove the key from.
+//     if idx < len(n.Keys) && n.Keys[idx] == key {
+//         if n.Leaf {
+//             // Case 1: key is in a leaf – remove it directly.
+//             n.Keys = append(n.Keys[:idx], n.Keys[idx+1:]...)
+//             n.Values = append(n.Values[:idx], n.Values[idx+1:]...)
+//             return
+//         } else {
+//             // Case 2: key is in an internal node.
+//             if len(n.Children[idx].Keys) >= t.T {
+//                 // Use predecessor key.
+//                 predKey, predValue := n.getPredecessor(idx)
+//                 n.Keys[idx] = predKey
+//                 n.Values[idx] = predValue
+//                 t.delete(n.Children[idx], predKey)
+//             } else if len(n.Children[idx+1].Keys) >= t.T {
+//                 // Use successor key.
+//                 succKey, succValue := n.getSuccessor(idx)
+//                 n.Keys[idx] = succKey
+//                 n.Values[idx] = succValue
+//                 t.delete(n.Children[idx+1], succKey)
+//             } else {
+//                 // Merge the two children and then delete the key from the merged node.
+//                 t.merge(n, idx)
+//                 t.delete(n.Children[idx], key)
+//             }
+//             return
+//         }
+//     } else {
+//         // Key is not found in this node.
+//         if n.Leaf {
+//             // The key is not in the tree.
+//             return
+//         }
+//         // Determine if we are at the last child.
+//         flag := (idx == len(n.Keys))
+//         // If the child where the key is supposed to exist has less than t keys (i.e. minimal),
+//         // fill that child.
+//         if len(n.Children[idx].Keys) < t.T {
+//             t.fill(n, idx)
+//         }
+//         // After fill, decide whether to descend into the merged child.
+//         if flag && idx > len(n.Keys) {
+//             idx--
+//         }
+//         t.delete(n.Children[idx], key)
+//     }
+// }
+
+// // getPredecessor finds the predecessor (largest key) in the subtree of child at index idx.
+// func (n *Node) getPredecessor(idx int) (int, string) {
+//     cur := n.Children[idx]
+//     for !cur.Leaf {
+//         cur = cur.Children[len(cur.Children)-1]
+//     }
+//     return cur.Keys[len(cur.Keys)-1], cur.Values[len(cur.Values)-1]
+// }
+
+// // getSuccessor finds the successor (smallest key) in the subtree of child at index idx.
+// func (n *Node) getSuccessor(idx int) (int, string) {
+//     cur := n.Children[idx+1]
+//     for !cur.Leaf {
+//         cur = cur.Children[0]
+//     }
+//     return cur.Keys[0], cur.Values[0]
+// }
+
+// // merge merges the child at index idx with its right sibling.
+// // The key from the parent at idx is pulled down into the merged node.
+// func (t *BTree) merge(n *Node, idx int) {
+//     child := n.Children[idx]
+//     sibling := n.Children[idx+1]
+
+//     // Move the key from parent down to child.
+//     child.Keys = append(child.Keys, n.Keys[idx])
+//     child.Values = append(child.Values, n.Values[idx])
+//     // Append sibling's keys, values and children.
+//     child.Keys = append(child.Keys, sibling.Keys...)
+//     child.Values = append(child.Values, sibling.Values...)
+//     if !child.Leaf {
+//         child.Children = append(child.Children, sibling.Children...)
+//     }
+//     // Remove the key and sibling pointer from the parent.
+//     n.Keys = append(n.Keys[:idx], n.Keys[idx+1:]...)
+//     n.Values = append(n.Values[:idx], n.Values[idx+1:]...)
+//     n.Children = append(n.Children[:idx+1], n.Children[idx+2:]...)
+// }
+
+// // fill makes sure that the child node n.Children[idx] has at least t keys.
+// func (t *BTree) fill(n *Node, idx int) {
+//     if idx != 0 && len(n.Children[idx-1].Keys) >= t.T {
+//         t.borrowFromPrev(n, idx)
+//     } else if idx != len(n.Children)-1 && len(n.Children[idx+1].Keys) >= t.T {
+//         t.borrowFromNext(n, idx)
+//     } else {
+//         if idx != len(n.Children)-1 {
+//             t.merge(n, idx)
+//         } else {
+//             t.merge(n, idx-1)
+//         }
+//     }
+// }
+
+// // borrowFromPrev borrows a key from the (idx-1)th child and moves it into child idx.
+// func (t *BTree) borrowFromPrev(n *Node, idx int) {
+//     child := n.Children[idx]
+//     sibling := n.Children[idx-1]
+
+//     // The last key of sibling goes up to parent; parent's key goes down to child's first position.
+//     child.Keys = append([]int{n.Keys[idx-1]}, child.Keys...)
+//     child.Values = append([]string{n.Values[idx-1]}, child.Values...)
+//     if !child.Leaf {
+//         child.Children = append([]*Node{sibling.Children[len(sibling.Children)-1]}, child.Children...)
+//         sibling.Children = sibling.Children[:len(sibling.Children)-1]
+//     }
+//     n.Keys[idx-1] = sibling.Keys[len(sibling.Keys)-1]
+//     n.Values[idx-1] = sibling.Values[len(sibling.Values)-1]
+//     sibling.Keys = sibling.Keys[:len(sibling.Keys)-1]
+//     sibling.Values = sibling.Values[:len(sibling.Values)-1]
+// }
+
+// // borrowFromNext borrows a key from the (idx+1)th child and moves it into child idx.
+// func (t *BTree) borrowFromNext(n *Node, idx int) {
+//     child := n.Children[idx]
+//     sibling := n.Children[idx+1]
+
+//     child.Keys = append(child.Keys, n.Keys[idx])
+//     child.Values = append(child.Values, n.Values[idx])
+//     if !child.Leaf {
+//         child.Children = append(child.Children, sibling.Children[0])
+//         sibling.Children = sibling.Children[1:]
+//     }
+//     n.Keys[idx] = sibling.Keys[0]
+//     n.Values[idx] = sibling.Values[0]
+//     sibling.Keys = sibling.Keys[1:]
+//     sibling.Values = sibling.Values[1:]
+// }
+
+// func main() {
+//     const dbFile = "btree.db"
+//     var tree *BTree
+
+//     // Try to load the tree from disk; if it doesn't exist, start with a new tree.
+//     if _, err := os.Stat(dbFile); os.IsNotExist(err) {
+//         tree = NewBTree(3) // For example, minimum degree = 3
+//         fmt.Println("Created a new B-tree.")
+//     } else {
+//         var err error
+//         tree, err = LoadTree(dbFile)
+//         if err != nil {
+//             fmt.Println("Failed to load tree:", err)
+//             return
+//         }
+//         fmt.Println("Loaded existing B-tree from file.")
+//     }
+
+//     // Inserting several key-value pairs.
+//     fmt.Println("Inserting keys...")
+//     tree.Insert(10, "ten")
+//     tree.Insert(20, "twenty")
+//     tree.Insert(5, "five")
+//     tree.Insert(6, "six")
+//     tree.Insert(12, "twelve")
+//     tree.Insert(30, "thirty")
+//     tree.Insert(7, "seven")
+//     tree.Insert(17, "seventeen")
+
+//     // Save the tree after insertion.
+//     if err := tree.Save(dbFile); err != nil {
+//         fmt.Println("Save error:", err)
+//     }
+
+//     // Searching for a key.
+//     searchKey := 6
+//     if val, found := tree.Root.Search(searchKey); found {
+//         fmt.Printf("Found key %d with value: %s\n", searchKey, val)
+//     } else {
+//         fmt.Printf("Key %d not found\n", searchKey)
+//     }
+
+//     // Deleting a key.
+//     fmt.Println("Deleting key 6...")
+//     tree.Delete(6)
+//     if err := tree.Save(dbFile); err != nil {
+//         fmt.Println("Save error:", err)
+//     }
+
+//     // Verify deletion.
+//     if _, found := tree.Root.Search(6); found {
+//         fmt.Println("Key 6 still exists!")
+//     } else {
+//         fmt.Println("Key 6 successfully deleted.")
+//     }
+// }
+
+// my initial non working code
+// package main
+
+// import (
+// 	"bytes"
+// 	"encoding/binary"
+// 	"fmt"
+// 	"os"
+// )
+
+// const (
+// 	DataFile string = "Data/TRoot"
+// 	MinKeys  int    = 1
+// 	MaxKeys  int    = 3
+// 	// i.e. MinKeys<=num_keys<MaxKeys
+// )
+
+// var BINARY_ORDER binary.ByteOrder = binary.LittleEndian
+// var PG_SIZE int32 = int32(binary.Size(Page{}))
+
+// type PageId int32
+
+// type Disk struct {
+// 	File *os.File
+// 	EndP PageId
+// }
+
+// type Page struct {
+// 	IsLeaf   bool
+// 	NodeCnt  int32
+// 	Nodes    [MaxKeys - 1]Node
+// 	Children [MaxKeys]PageId
+// }
+
+// type Node struct {
+// 	Key int32
+// 	// Val [255]byte
+// 	Val [5]byte
+// }
+
+// type NodeWChildren struct {
+// 	Pnode Node
+// 	RPgId PageId
+// }
+
+// // returns index if found else give index of element just greater than key
+// func Search(n []Node, key int32) int {
+// 	var i, j int = 0, len(n) - 1
+// 	var m, cand int
+// 	for i <= j {
+// 		m = i + (j-i)/2
+// 		if n[m].Key == key {
+// 			return m
+// 		} else if n[m].Key < key {
+// 			i = m + 1
+// 			cand = m
+// 		} else {
+// 			j = m - 1
+// 		}
+// 	}
+// 	return cand
+// }
+
+// func InitDisk() *Disk {
+
+// 	file, err := os.OpenFile(DataFile, os.O_RDWR|os.O_CREATE, 0666)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	return &Disk{
+// 		File: file,
+// 		EndP: PageId(0),
+// 	}
+// }
+
+// func (dsk *Disk) Close() {
+
+// 	err := dsk.File.Close()
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// }
+
+// func (dsk *Disk) getPage(pid PageId) (*Page, error) {
+
+// 	buf := make([]byte, PG_SIZE)
+// 	n, err := dsk.File.ReadAt(buf, int64(pid*PageId(PG_SIZE)))
+// 	fmt.Println("bytes read", n, "pg size", PG_SIZE)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if n < int(PG_SIZE) {
+// 		return nil, fmt.Errorf("expected %d bytes for page, but only read %d bytes", PG_SIZE, n)
+// 	}
+
+// 	rd := bytes.NewReader(buf)
+// 	pge := Page{}
+// 	if err := binary.Read(rd, BINARY_ORDER, &pge); err != nil {
+// 		return nil, err
+// 	}
+// 	return &pge, nil
+// }
+
+// func (dsk *Disk) wrtPage(pid PageId, pge *Page) error {
+
+// 	buf := new(bytes.Buffer)
+// 	if err := binary.Write(buf, binary.LittleEndian, pge); err != nil {
+// 		return err
+// 	}
+
+// 	offset := int64(pid) * int64(PG_SIZE)
+// 	_, err := dsk.File.WriteAt(buf.Bytes(), offset)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
+
+// func (table *Disk) Select(root *Page, key int32) (*Node, error) {
+
+// 	ind := Search(root.Nodes[:], key)
+// 	if root.Nodes[ind].Key == key {
+// 		return &root.Nodes[ind], nil
+// 	} else if root.IsLeaf {
+// 		return nil, fmt.Errorf("key not found")
+// 	} else {
+// 		var page *Page
+// 		var err error
+// 		if ind == 0 && root.Nodes[ind].Key > key {
+// 			page, err = table.getPage(root.Children[0])
+// 			if err != nil {
+// 				return nil, err
+// 			}
+// 		} else {
+// 			page, err = table.getPage(root.Children[ind+1])
+// 			if err != nil {
+// 				return nil, err
+// 			}
+// 		}
+
+// 		node, err := table.Select(page, key)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		return node, nil
+// 	}
+
+// }
+// func (table *Disk) Insert(root *Page, key int32, val string) (*NodeWChildren, error) {
+
+// 	ind := Search(root.Nodes[:], key)
+// 	if root.Nodes[ind].Key == key {
+// 		return nil, fmt.Errorf("duplicate keys not allowed")
+// 	}
+// 	if root.IsLeaf {
+
+// 		bytes := []byte(val)
+// 		// var byteArr [255]byte
+// 		var byteArr [5]byte
+// 		copy(byteArr[:], bytes)
+// 		tmpNode := Node{Key: key, Val: byteArr}
+
+// 		if root.NodeCnt < int32(MaxKeys) {
+
+// 			for i := 0; i < len(root.Nodes); i++ {
+// 				if i >= ind {
+// 					root.Nodes[i], tmpNode = tmpNode, root.Nodes[i]
+// 				}
+// 			}
+// 			root.NodeCnt++
+// 			return nil, nil
+// 		}
+// 		mid := (MaxKeys + 1) / 2
+// 		p := Page{
+// 			IsLeaf:   true,
+// 			NodeCnt:  int32(mid),
+// 			Nodes:    [MaxKeys - 1]Node{},
+// 			Children: [MaxKeys]PageId{},
+// 		}
+// 		root.NodeCnt = int32(mid)
+// 		if ind == mid-1 {
+// 			for i := 0; i < MaxKeys+1; i++ {
+// 				if i >= mid {
+// 					root.Nodes[i], p.Nodes[i-mid] = p.Nodes[i-mid], root.Nodes[i]
+// 				}
+// 				p.Children[i] = -1
+// 			}
+// 			tp := table.EndP
+// 			table.wrtPage(tp, &p)
+// 			table.EndP += PageId(PG_SIZE)
+// 			return &NodeWChildren{
+// 				Pnode: tmpNode,
+// 				RPgId: tp,
+// 			}, nil
+// 		}
+// 		node := root.Nodes[mid-1]
+// 		root.Nodes[mid-1] = Node{}
+
+// 		for i := 0; i < MaxKeys+1; i++ {
+// 			if i == ind {
+// 				root.Nodes[i] = tmpNode
+// 			}
+// 			if i >= mid {
+// 				root.Nodes[i], p.Nodes[i-mid] = p.Nodes[i-mid], root.Nodes[i]
+// 			}
+// 			p.Children[i] = -1
+// 		}
+// 		tp := table.EndP
+// 		table.wrtPage(tp, &p)
+// 		table.EndP += 1
+// 		return &NodeWChildren{
+// 			Pnode: node,
+// 			RPgId: tp,
+// 		}, nil
+// 	}
+// 	var page *Page
+// 	var err error
+// 	if ind == 0 && root.Nodes[ind].Key > key {
+// 		page, err = table.getPage(root.Children[0])
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	} else {
+// 		page, err = table.getPage(root.Children[ind+1])
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
+// 	nwc, err := table.Insert(page, key, val)
+// 	if err != nil || nwc == nil {
+// 		return nil, err
+// 	}
+// 	tmpNode, tmpChld := nwc.Pnode, nwc.RPgId
+// 	ind = Search(page.Nodes[:], tmpNode.Key)
+// 	if root.NodeCnt < int32(MaxKeys) {
+
+// 		for i := 0; i < len(root.Nodes); i++ {
+// 			if i >= ind {
+// 				root.Nodes[i], tmpNode = tmpNode, root.Nodes[i]
+// 			}
+// 		}
+// 		for i := 0; i < len(root.Children); i++ {
+// 			if i >= ind {
+// 				root.Children[i+1], tmpChld = tmpChld, root.Children[i+1]
+
+// 			}
+// 		}
+
+// 		mid := (MaxKeys + 1) / 2
+// 		p := Page{
+// 			IsLeaf:   true,
+// 			NodeCnt:  int32(mid),
+// 			Nodes:    [MaxKeys - 1]Node{},
+// 			Children: [MaxKeys]PageId{},
+// 		}
+// 		root.NodeCnt = int32(mid)
+// 		if ind == mid-1 {
+// 			for i := 0; i < MaxKeys+1; i++ {
+// 				if i >= mid {
+// 					root.Nodes[i], p.Nodes[i-mid] = p.Nodes[i-mid], root.Nodes[i]
+// 				}
+// 			}
+// 			for i := 0; i < len(root.Children); i++ {
+// 				if i >= ind {
+// 					root.Children[i+1], tmpChld = tmpChld, root.Children[i+1]
+
+// 				}
+// 			}
+// 			tp := table.EndP
+// 			table.wrtPage(tp, &p)
+// 			table.EndP += PageId(PG_SIZE)
+// 			return &NodeWChildren{
+// 				Pnode: tmpNode,
+// 				RPgId: tp,
+// 			}, nil
+// 		}
+// 		node := root.Nodes[mid-1]
+// 		root.Nodes[mid-1] = Node{}
+
+// 		for i := 0; i < MaxKeys+1; i++ {
+// 			if i == ind {
+// 				root.Nodes[i] = tmpNode
+// 			}
+// 			if i >= mid {
+// 				root.Nodes[i], p.Nodes[i-mid] = p.Nodes[i-mid], root.Nodes[i]
+// 			}
+// 		}
+// 		for i := 0; i < MaxKeys+1; i++ {
+// 			if i == ind {
+// 				root.Children[i+1] = tmpChld
+// 			}
+// 			if i >= mid {
+// 				root.Children[i+1], p.Children[i-mid+1] = p.Children[i-mid+1], root.Children[i+1]
+// 			}
+// 		}
+// 		tp := table.EndP
+// 		table.wrtPage(tp, &p)
+// 		table.EndP += 1
+// 		return &NodeWChildren{
+// 			Pnode: node,
+// 			RPgId: tp,
+// 		}, nil
+// 	}
+
+// 	return nil, nil
+// }
+
+// func (pge *Page) Update() {
+
+// }
+// func (pge *Page) Delete() {
+
+// }
+
