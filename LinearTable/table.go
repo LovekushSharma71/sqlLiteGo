@@ -7,10 +7,6 @@ import (
 	"fmt"
 )
 
-const (
-	ND_PER_PG = 10
-)
-
 type Table struct {
 	Table *DiskManager.DiskManager
 }
