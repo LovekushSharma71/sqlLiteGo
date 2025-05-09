@@ -15,11 +15,6 @@ type Table struct {
 	Table *DiskManager.DiskManager
 }
 
-type Page struct {
-	PageData DiskManager.DiskData
-	NextPage *DiskManager.DiskData
-}
-
 type Node struct {
 	Key int64
 	Val string
