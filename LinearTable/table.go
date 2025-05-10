@@ -70,13 +70,13 @@ func (t *Table) Insert(k int64, v string) error {
 func SerializeNode(n Node) ([]byte, error) {
 	var buf bytes.Buffer
 
-	err := binary.Write(&buf, binary.BigEndian, n.Key)
+	err := binary.Write(&buf, DiskManager.BINARY_ORDER, n.Key)
 	if err != nil {
 		return nil, fmt.Errorf("error writing key: %w", err)
 	}
 
 	valueBytes := []byte(n.Val)
-	err = binary.Write(&buf, binary.BigEndian, int32(len(valueBytes)))
+	err = binary.Write(&buf, DiskManager.BINARY_ORDER, int32(len(valueBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("error writing value length: %w", err)
 	}
@@ -93,13 +93,13 @@ func DeserializeNode(data []byte) (Node, error) {
 	var node Node
 	buf := bytes.NewReader(data)
 
-	err := binary.Read(buf, binary.BigEndian, &node.Key)
+	err := binary.Read(buf, DiskManager.BINARY_ORDER, &node.Key)
 	if err != nil {
 		return Node{}, fmt.Errorf("error reading key: %w", err)
 	}
 
 	var valueLen int32
-	err = binary.Read(buf, binary.BigEndian, &valueLen)
+	err = binary.Read(buf, DiskManager.BINARY_ORDER, &valueLen)
 	if err != nil {
 		return Node{}, fmt.Errorf("error reading value length: %w", err)
 	}
