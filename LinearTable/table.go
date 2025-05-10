@@ -38,7 +38,7 @@ func (t *Table) Select() {
 		if srt >= t.Table.EndOffset {
 			break
 		}
-		pge, err := t.Table.GetDiskData(srt)
+		pge, err := t.Table.GetDiskData(int64(srt))
 		if err != nil {
 			panic(err)
 		}
@@ -47,7 +47,7 @@ func (t *Table) Select() {
 			panic(err)
 		}
 		fmt.Printf("key: %d , val: %s\n", nde.Key, nde.Val)
-		srt += DiskManager.HEADER_SIZE + pge.Header.Size
+		srt += DiskManager.DskAddr(DiskManager.HEADER_SIZE + pge.Header.Size)
 	}
 }
 

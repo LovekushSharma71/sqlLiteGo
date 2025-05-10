@@ -22,8 +22,10 @@ const (
 
 var BINARY_ORDER = binary.BigEndian
 
+type DskAddr int64 // int64 representation of disk address
+
 type RecordHeader struct {
-	Addr int64
+	Addr DskAddr
 	Size int64
 	Type int8
 }
@@ -37,8 +39,8 @@ type DiskData struct {
 
 type DiskManager struct {
 	File      *os.File
-	SrtOffset int64
-	EndOffset int64
+	SrtOffset DskAddr
+	EndOffset DskAddr
 	mu        sync.Mutex // just in case
 }
 
@@ -58,7 +60,7 @@ func InitDiskManager(fileName string) (*DiskManager, error) {
 	return &DiskManager{
 		File:      file,
 		SrtOffset: 0,
-		EndOffset: size,
+		EndOffset: DskAddr(size),
 		mu:        sync.Mutex{},
 	}, nil
 
@@ -88,11 +90,11 @@ func (d *DiskManager) WrtDiskData(data *DiskData) error {
 
 	bufDiskData := append(bufHeader, bufData...)
 
-	_, err = d.File.WriteAt(bufDiskData, d.EndOffset)
+	_, err = d.File.WriteAt(bufDiskData, int64(d.EndOffset))
 	if err != nil {
 		return err
 	}
-	d.EndOffset += int64(len(bufDiskData))
+	d.EndOffset += DskAddr(len(bufDiskData))
 
 	return nil
 }
@@ -130,5 +132,3 @@ func (d *DiskManager) GetDiskData(addr int64) (*DiskData, error) {
 	}, nil
 
 }
-
-
