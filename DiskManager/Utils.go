@@ -11,6 +11,10 @@ func SerializeHeader(h *RecordHeader) ([]byte, error) {
 
 	bufHeader := new(bytes.Buffer)
 
+	if err := binary.Write(bufHeader, BINARY_ORDER, h.Stat); err != nil {
+		return nil, err
+	}
+
 	if err := binary.Write(bufHeader, BINARY_ORDER, h.Addr); err != nil {
 		return nil, err
 	}
@@ -90,6 +94,10 @@ func DeserializeHeader(headerBytes []byte) (*RecordHeader, error) {
 
 	buf := bytes.NewReader(headerBytes)
 	var header RecordHeader
+
+	if err := binary.Read(buf, BINARY_ORDER, &header.Stat); err != nil {
+		return nil, fmt.Errorf("binary read failed: %v", err)
+	}
 
 	if err := binary.Read(buf, BINARY_ORDER, &header.Addr); err != nil {
 		return nil, fmt.Errorf("binary read failed: %v", err)
