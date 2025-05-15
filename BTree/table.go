@@ -13,7 +13,7 @@ const (
 	MAX_NODES_ROOT = 3
 	MIN_NODES      = 1
 	MAX_NODES      = 3 
-	// MIN_NODES<nodes<=MAX_NODES
+	// MIN_NODES<=nodes<=MAX_NODES
 )
 
 type Table struct {
