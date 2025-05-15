@@ -2,13 +2,14 @@ package DiskManager
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"sync"
 )
 
 const (
 	DB_FILE     = "Data/"
-	HEADER_SIZE = 17
+	HEADER_SIZE = 18
 )
 
 const (
@@ -20,11 +21,19 @@ const (
 	DT_INT8
 )
 
+const (
+	HD_STAT = iota
+	HD_ADDR
+	HD_SIZE
+	HD_TYPE
+)
+
 var BINARY_ORDER = binary.BigEndian
 
 type DskAddr int64 // int64 representation of disk address
 
 type RecordHeader struct {
+	Stat int8 // false=deleted true=not deleted
 	Addr DskAddr
 	Size int64
 	Type int8
@@ -68,6 +77,92 @@ func InitDiskManager(fileName string) (*DiskManager, error) {
 
 func (d *DiskManager) Close() error {
 	return d.File.Close()
+}
+
+func (d *DiskManager) EditHeader(addr DskAddr, hdr int, val interface{}) error {
+
+	header, err := d.GetHeader(addr)
+	if err != nil {
+		return err
+	}
+	var buf []byte
+
+	switch hdr {
+	case HD_STAT:
+
+		v, ok := val.(int8)
+		if !ok {
+			return fmt.Errorf("invalid data provided")
+		}
+		header.Stat = v
+		buf, err = SerializeHeader(header)
+		if err != nil {
+			return err
+		}
+	case HD_ADDR:
+
+		v, ok := val.(DskAddr)
+		if !ok {
+			return fmt.Errorf("invalid data provided")
+		}
+		header.Addr = v
+		buf, err = SerializeHeader(header)
+		if err != nil {
+			return err
+		}
+
+	case HD_SIZE:
+
+		v, ok := val.(int64)
+		if !ok {
+			return fmt.Errorf("invalid data provided")
+		}
+		header.Size = v
+		buf, err = SerializeHeader(header)
+		if err != nil {
+			return err
+		}
+
+	case HD_TYPE:
+
+		v, ok := val.(int8)
+		if !ok {
+			return fmt.Errorf("invalid data provided")
+		}
+		header.Type = v
+		buf, err = SerializeHeader(header)
+		if err != nil {
+			return err
+		}
+
+	default:
+		return fmt.Errorf("invalid header")
+	}
+
+	_, err = d.File.WriteAt(buf, int64(addr))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *DiskManager) GetHeader(addr DskAddr) (*RecordHeader, error) {
+
+	buf := make([]byte, HEADER_SIZE)
+	n, err := d.File.ReadAt(buf, int64(addr))
+	if err != nil || n == 0 {
+		if err == nil {
+			err = fmt.Errorf("header of size zero")
+		}
+		return nil, err
+	}
+
+	hdr, err := DeserializeHeader(buf)
+	if err != nil {
+		return nil, err
+	}
+	return hdr, nil
 }
 
 func (d *DiskManager) WrtDiskData(data *DiskData) error {
