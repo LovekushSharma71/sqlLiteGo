@@ -11,7 +11,7 @@ import (
 const (
 	BTREE_ORDER = 4
 	MIN_NODES   = 1
-	MAX_NODES   = 3 
+	MAX_NODES   = 3
 	// MIN_NODES<=nodes<=MAX_NODES
 )
 
@@ -56,13 +56,12 @@ func (t *Table) Insert(root *Page, addr DiskManager.DskAddr, key int64, val stri
 
 	if root.PgHeader.IsLeaf {
 
-		if len(root.PageData) < MAX_NODES {
+		nde := append(root.PageData, Node{Len: int64(len(val)), Key: key, Val: val})
+		sort.Slice(nde, func(i, j int) bool {
+			return nde[i].Key < nde[j].Key
+		})
 
-			nde := append(root.PageData, Node{Len: int64(len(val)), Key: key, Val: val})
-			sort.Slice(nde, func(i, j int) bool {
-				return nde[i].Key < nde[i].Key
-			})
-
+		if len(nde) <= MAX_NODES {
 			pge := Page{
 				PgHeader: Header{
 					IsLeaf: root.PgHeader.IsLeaf,
@@ -74,7 +73,7 @@ func (t *Table) Insert(root *Page, addr DiskManager.DskAddr, key int64, val stri
 				Children: root.Children,
 			}
 
-			err := t.Table.EditHeader(addr, DiskManager.HD_STAT, false)
+			err := t.Table.EditHeader(addr, DiskManager.HD_STAT, 0)
 			if err != nil {
 				return -1, nil, -1, -1, err
 			}
@@ -95,9 +94,61 @@ func (t *Table) Insert(root *Page, addr DiskManager.DskAddr, key int64, val stri
 			}
 
 			return ddata.Header.Addr, nil, -1, -1, nil
-
 		}
 
+		pge1 := Page{
+			PgHeader: Header{
+				IsLeaf: root.PgHeader.IsLeaf,
+				IsRoot: root.PgHeader.IsRoot,
+				NumNds: root.PgHeader.NumNds / 2,
+				Parent: root.PgHeader.Parent,
+			},
+			PageData: nde[:root.PgHeader.NumNds/2],
+			Children: root.Children,
+		}
+		pge2 := Page{
+			PgHeader: Header{
+				IsLeaf: root.PgHeader.IsLeaf,
+				IsRoot: root.PgHeader.IsRoot,
+				NumNds: root.PgHeader.NumNds/2 - 1,
+				Parent: root.PgHeader.Parent,
+			},
+			PageData: nde[root.PgHeader.NumNds/2+1:],
+			Children: root.Children,
+		}
+		b1, err := SerializePage(&pge1)
+		if err != nil {
+			return -1, nil, -1, -1, err
+		}
+
+		b2, err := SerializePage(&pge2)
+		if err != nil {
+			return -1, nil, -1, -1, err
+		}
+
+		d1 := DiskManager.DiskData{
+			Header: DiskManager.RecordHeader{
+				Stat: 1,
+				Type: DiskManager.DT_BYTES,
+			},
+			Data: b1,
+		}
+		d2 := DiskManager.DiskData{
+			Header: DiskManager.RecordHeader{
+				Stat: 1,
+				Type: DiskManager.DT_BYTES,
+			},
+			Data: b2,
+		}
+		err = t.Table.WrtDiskData(&d1)
+		if err != nil {
+			return -1, nil, -1, -1, err
+		}
+		err = t.Table.WrtDiskData(&d2)
+		if err != nil {
+			return -1, nil, -1, -1, err
+		}
+		return -1, &nde[root.PgHeader.NumNds/2], d1.Header.Addr, d2.Header.Addr, nil
 	}
 	return -1, nil, -1, -1, nil
 }
