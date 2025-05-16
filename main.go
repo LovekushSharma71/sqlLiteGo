@@ -1,9 +1,5 @@
 package main
 
-import (
-	"db/LinearTable"
-)
-
 // import (
 // 	"bufio"
 // 	"fmt"
@@ -94,16 +90,10 @@ func main() {
 	// }
 	// defer dsk.Close()
 
-	t, err := LinearTable.InitLinearTable("test")
-	if err != nil {
-		panic(err)
-	}
-	defer t.Close()
+	// t.Insert(1, "val1")
+	// t.Select()
 
-	t.Insert(1, "val1")
-	t.Select()
-
-	t.Insert(2, "val2")
-	t.Select()
+	// t.Insert(2, "val2")
+	// t.Select()
 
 }

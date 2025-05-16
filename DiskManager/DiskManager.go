@@ -1,6 +1,7 @@
 package DiskManager
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 const (
 	DB_FILE     = "Data/"
 	HEADER_SIZE = 18
+	TB_HDR_SIZE = 9
 )
 
 const (
@@ -28,9 +30,19 @@ const (
 	HD_TYPE
 )
 
+const (
+	Linear = iota
+	B_Tree
+)
+
 var BINARY_ORDER = binary.BigEndian
 
 type DskAddr int64 // int64 representation of disk address
+
+type TableHeader struct {
+	RootAddr DskAddr
+	TbleType int8
+}
 
 type RecordHeader struct {
 	Stat int8 // false=deleted true=not deleted
@@ -73,6 +85,51 @@ func InitDiskManager(fileName string) (*DiskManager, error) {
 		mu:        sync.Mutex{},
 	}, nil
 
+}
+
+// maybe use it in future
+func (d *DiskManager) GetTableDetails() (*int8, error) {
+
+	var buf []byte = make([]byte, TB_HDR_SIZE)
+	n, err := d.File.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	if n != TB_HDR_SIZE {
+		return nil, fmt.Errorf("error getting header: expected %d got %d", TB_HDR_SIZE, n)
+	}
+	var t *int8
+	reader := bytes.NewReader(buf)
+	if err := binary.Read(reader, BINARY_ORDER, d.SrtOffset); err != nil {
+		return nil, fmt.Errorf("binary read failed: %v", err)
+	}
+	if err := binary.Read(reader, BINARY_ORDER, t); err != nil {
+		return nil, fmt.Errorf("binary read failed: %v", err)
+	}
+	return t, nil
+}
+
+func (d *DiskManager) WrtTableDetails(strt DskAddr, ty int8) error {
+
+	buf := new(bytes.Buffer)
+
+	if err := binary.Write(buf, BINARY_ORDER, strt); err != nil {
+		return fmt.Errorf("binary.Write failed: %v", err)
+	}
+	if err := binary.Write(buf, BINARY_ORDER, ty); err != nil {
+		return fmt.Errorf("binary.Write failed: %v", err)
+	}
+
+	n, err := d.File.Write(buf.Bytes())
+
+	if err != nil {
+		return err
+	}
+	if n != TB_HDR_SIZE {
+		return fmt.Errorf("error writing header: expected %d got %d", TB_HDR_SIZE, n)
+	}
+
+	return nil
 }
 
 func (d *DiskManager) Close() error {

@@ -48,12 +48,49 @@ func InitBTree(fileName string) (*Table, error) {
 	}, nil
 }
 
+func (t *Table) Close() {
+	t.Table.File.Close()
+}
+
+//TODO: use binary search to get index to insert
+
 func (t *Table) Select(root *Page) {
 
 }
 
 func (t *Table) Insert(root *Page, addr DiskManager.DskAddr, key int64, val string) (DiskManager.DskAddr, *Node, DiskManager.DskAddr, DiskManager.DskAddr, error) {
 
+	if t.Table.SrtOffset == t.Table.EndOffset {
+
+		var nde []Node
+		nde = append(nde, Node{Len: int64(len(val)), Key: key, Val: val})
+		var ch []DiskManager.DskAddr = []DiskManager.DskAddr{-1, -1}
+		pge := Page{
+			PgHeader: Header{
+				IsLeaf: true,
+				IsRoot: true,
+				NumNds: 1,
+				Parent: -1,
+			},
+			PageData: nde,
+			Children: ch,
+		}
+		buf, err := SerializePage(&pge)
+		if err != nil {
+			return -1, nil, -1, -1, err
+		}
+		dd := DiskManager.DiskData{
+			Header: DiskManager.RecordHeader{
+				Stat: 1,
+				Type: DiskManager.DT_BYTES,
+			},
+			Data: buf,
+		}
+		if err := t.Table.WrtDiskData(&dd); err != nil {
+			return -1, nil, -1, -1, err
+		}
+		return dd.Header.Addr, nil, -1, -1, nil
+	}
 	if root.PgHeader.IsLeaf {
 
 		nde := append(root.PageData, Node{Len: int64(len(val)), Key: key, Val: val})
@@ -150,6 +187,31 @@ func (t *Table) Insert(root *Page, addr DiskManager.DskAddr, key int64, val stri
 		}
 		return -1, &nde[root.PgHeader.NumNds/2], d1.Header.Addr, d2.Header.Addr, nil
 	}
+	// ind := root.PgHeader.NumNds
+	// for i := 0; i < int(root.PgHeader.NumNds); i++ {
+	// 	if root.PageData[i].Key == key {
+	// 		return -1, nil, -1, -1, fmt.Errorf("duplicate keys not allowed")
+	// 	} else if root.PageData[i].Key > key {
+	// 		ind = int32(i)
+	// 		break
+	// 	}
+	// }
+
+	// dd, err := t.Table.GetDiskData(int64(root.Children[ind]))
+	// if err != nil {
+	// 	return -1, nil, -1, -1, err
+	// }
+
+	// pge, err := DeserializePage(dd.Data.([]byte))
+	// if err != nil {
+	// 	return -1, nil, -1, -1, err
+	// }
+
+	// nadd, nde, c1, c2, err := t.Insert(pge, dd.Header.Addr, key, val)
+	// if err != nil {
+	// 	return -1, nil, -1, -1, err
+	// }
+
 	return -1, nil, -1, -1, nil
 }
 
