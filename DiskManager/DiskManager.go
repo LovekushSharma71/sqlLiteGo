@@ -1,75 +1,19 @@
-package DiskManager
+package diskmanager
 
 import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 )
-
-const (
-	DB_FILE     = "Data/"
-	HEADER_SIZE = 18
-	TB_HDR_SIZE = 9
-)
-
-const (
-	DT_STRING = iota
-	DT_BYTES
-	DT_INT64
-	DT_INT32
-	DT_INT16
-	DT_INT8
-)
-
-const (
-	HD_STAT = iota
-	HD_ADDR
-	HD_SIZE
-	HD_TYPE
-)
-
-const (
-	Linear = iota
-	B_Tree
-)
-
-var BINARY_ORDER = binary.BigEndian
-
-type DskAddr int64 // int64 representation of disk address
-
-type TableHeader struct {
-	RootAddr DskAddr
-	TbleType int8
-}
-
-type RecordHeader struct {
-	Stat int8 // false=deleted true=not deleted
-	Addr DskAddr
-	Size int64
-	Type int8
-}
-
-type DiskData struct {
-	// Header
-	Header RecordHeader
-	// Data
-	Data interface{}
-}
-
-type DiskManager struct {
-	File      *os.File
-	SrtOffset DskAddr
-	EndOffset DskAddr
-	mu        sync.Mutex // just in case
-}
 
 func InitDiskManager(fileName string) (*DiskManager, error) {
 
 	file, err := os.OpenFile(DB_FILE+fileName, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening file %s: %w", fileName, err)
 	}
 
 	info, err := file.Stat()
@@ -78,209 +22,183 @@ func InitDiskManager(fileName string) (*DiskManager, error) {
 	}
 	size := info.Size()
 
-	return &DiskManager{
-		File:      file,
-		SrtOffset: 0,
-		EndOffset: DskAddr(size),
-		mu:        sync.Mutex{},
-	}, nil
-
-}
-
-// maybe use it in future
-func (d *DiskManager) GetTableDetails() (*int8, error) {
-
-	var buf []byte = make([]byte, TB_HDR_SIZE)
-	n, err := d.File.Read(buf)
+	buf := make([]byte, TBL_HEAD_SIZE)
+	n, err := file.Read(buf)
 	if err != nil {
 		return nil, err
 	}
-	if n != TB_HDR_SIZE {
-		return nil, fmt.Errorf("error getting header: expected %d got %d", TB_HDR_SIZE, n)
+	if n != TBL_HEAD_SIZE {
+		return nil, fmt.Errorf("invalid header size: expected %d got %d", TBL_HEAD_SIZE, n)
 	}
-	var t *int8
+
+	var tblHead *TableHeader = &TableHeader{}
 	reader := bytes.NewReader(buf)
-	if err := binary.Read(reader, BINARY_ORDER, d.SrtOffset); err != nil {
-		return nil, fmt.Errorf("binary read failed: %v", err)
+	if err := binary.Read(reader, BINARY_ORDER, tblHead); err != nil {
+		return nil, err
 	}
-	if err := binary.Read(reader, BINARY_ORDER, t); err != nil {
-		return nil, fmt.Errorf("binary read failed: %v", err)
-	}
-	return t, nil
+
+	return &DiskManager{
+		FilObj: file,
+		SrtOff: tblHead.RootAddr,
+		Cursor: tblHead.RootAddr,
+		EndOff: int32(size),
+		IsTree: !tblHead.IsLinear,
+		MuLock: sync.Mutex{},
+	}, nil
 }
 
-func (d *DiskManager) WrtTableDetails(strt DskAddr, ty int8) error {
+func (d *DiskManager) GetDiskData() (*DiskData, error) {
 
-	buf := new(bytes.Buffer)
-
-	if err := binary.Write(buf, BINARY_ORDER, strt); err != nil {
-		return fmt.Errorf("binary.Write failed: %v", err)
-	}
-	if err := binary.Write(buf, BINARY_ORDER, ty); err != nil {
-		return fmt.Errorf("binary.Write failed: %v", err)
-	}
-
-	n, err := d.File.Write(buf.Bytes())
-
-	if err != nil {
-		return err
-	}
-	if n != TB_HDR_SIZE {
-		return fmt.Errorf("error writing header: expected %d got %d", TB_HDR_SIZE, n)
-	}
-
-	return nil
-}
-
-func (d *DiskManager) Close() error {
-	return d.File.Close()
-}
-
-func (d *DiskManager) EditHeader(addr DskAddr, hdr int, val interface{}) error {
-
-	header, err := d.GetHeader(addr)
-	if err != nil {
-		return err
-	}
 	var buf []byte
-
-	switch hdr {
-	case HD_STAT:
-
-		v, ok := val.(int8)
-		if !ok {
-			return fmt.Errorf("invalid data provided")
-		}
-		header.Stat = v
-		buf, err = SerializeHeader(header)
-		if err != nil {
-			return err
-		}
-	case HD_ADDR:
-
-		v, ok := val.(DskAddr)
-		if !ok {
-			return fmt.Errorf("invalid data provided")
-		}
-		header.Addr = v
-		buf, err = SerializeHeader(header)
-		if err != nil {
-			return err
-		}
-
-	case HD_SIZE:
-
-		v, ok := val.(int64)
-		if !ok {
-			return fmt.Errorf("invalid data provided")
-		}
-		header.Size = v
-		buf, err = SerializeHeader(header)
-		if err != nil {
-			return err
-		}
-
-	case HD_TYPE:
-
-		v, ok := val.(int8)
-		if !ok {
-			return fmt.Errorf("invalid data provided")
-		}
-		header.Type = v
-		buf, err = SerializeHeader(header)
-		if err != nil {
-			return err
-		}
-
-	default:
-		return fmt.Errorf("invalid header")
+	if d.IsTree {
+		buf = make([]byte, TREE_DISKDATA_SIZE)
+	} else {
+		buf = make([]byte, LINEAR_DISKDATA_SIZE)
 	}
 
-	_, err = d.File.WriteAt(buf, int64(addr))
+	n, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("GetDiskData error: %s", err.Error())
+	}
+	if n != len(buf) {
+		return nil, fmt.Errorf("GetDiskData error, invalid length read: expected len %d got %d", len(buf), n)
 	}
 
-	return nil
+	data, err := DeserializeDskData(buf)
+	if err != nil {
+		return nil, fmt.Errorf("GetDiskData error: %s", err.Error())
+	}
+	return data, nil
 }
 
-func (d *DiskManager) GetHeader(addr DskAddr) (*RecordHeader, error) {
+func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
+
+	if data == nil {
+		return nil, fmt.Errorf("WrtDiskData error: input cannot be nil")
+	}
+
+	dskData := &DiskData{
+		RecHead: DskDataHdr{
+			Deleted: false,
+			RecAddr: d.EndOff,
+			RecSize: int32(binary.Size(data)),
+		},
+		RecData: data,
+	}
+
+	switch reflect.TypeOf(data) {
+	case reflect.TypeOf(TreePage{}):
+		dskData.RecHead.RecType = DT_TREE_PAGE
+	case reflect.TypeOf(ListPage{}):
+		dskData.RecHead.RecType = DT_LIST_PAGE
+	default:
+		return nil, fmt.Errorf("WrtDiskData error: data type %T not supported", data)
+	}
+
+	buf, err := SerializeDiskData(dskData)
+	if err != nil {
+		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
+	}
+	_, err = d.FilObj.WriteAt(buf, int64(dskData.RecHead.RecAddr))
+	if err != nil {
+		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
+	}
+
+	return dskData, nil
+}
+
+func (d *DiskManager) EdtDiskData(data interface{}) error {
+
+	if data == nil {
+		return fmt.Errorf("EditDiskData error: input cannot be nil")
+	}
+
+	dskData := &DiskData{
+		RecHead: DskDataHdr{
+			Deleted: false,
+			RecAddr: d.Cursor,
+			RecSize: int32(binary.Size(data)),
+		},
+		RecData: data,
+	}
+
+	switch reflect.TypeOf(data) {
+	case reflect.TypeOf(TreePage{}):
+		dskData.RecHead.RecType = DT_TREE_PAGE
+	case reflect.TypeOf(ListPage{}):
+		dskData.RecHead.RecType = DT_LIST_PAGE
+	default:
+		return fmt.Errorf("EdtDiskData error: data type %T not supported", data)
+	}
 
 	buf := make([]byte, HEADER_SIZE)
-	n, err := d.File.ReadAt(buf, int64(addr))
-	if err != nil || n == 0 {
-		if err == nil {
-			err = fmt.Errorf("header of size zero")
-		}
-		return nil, err
-	}
-
-	hdr, err := DeserializeHeader(buf)
+	_, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("EdtDiskData error: %s", err.Error())
 	}
-	return hdr, nil
-}
 
-func (d *DiskManager) WrtDiskData(data *DiskData) error {
+	reader := bytes.NewReader(buf)
+	hdr := &DskDataHdr{}
+	if err := binary.Read(reader, BINARY_ORDER, hdr); err != nil {
+		return fmt.Errorf("EdtDiskData error: %s", err.Error())
+	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	if hdr.RecType != dskData.RecHead.RecType {
+		return fmt.Errorf("EdtDiskData error, incompatible data type: expected %d given %d",
+			hdr.RecType, dskData.RecHead.RecType)
+	}
 
-	data.Header.Addr = d.EndOffset
-
-	bufData, err := SerializeData(data.Data)
+	buf, err = SerializeDiskData(dskData)
 	if err != nil {
-		return err
+		return fmt.Errorf("EdtDiskData error: %s", err.Error())
 	}
 
-	data.Header.Size = int64(len(bufData))
-	bufHeader, err := SerializeHeader(&data.Header)
+	_, err = d.FilObj.WriteAt(buf, int64(d.Cursor))
 	if err != nil {
-		return err
+		return fmt.Errorf("EdtDiskData error: %s", err.Error())
 	}
-
-	bufDiskData := append(bufHeader, bufData...)
-
-	_, err = d.File.WriteAt(bufDiskData, int64(d.EndOffset))
-	if err != nil {
-		return err
-	}
-	d.EndOffset += DskAddr(len(bufDiskData))
 
 	return nil
+
 }
 
-func (d *DiskManager) GetDiskData(addr int64) (*DiskData, error) {
+func (d *DiskManager) DelDiskData() error {
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	bufHeader := make([]byte, HEADER_SIZE)
-	_, err := d.File.ReadAt(bufHeader, addr)
+	buf := make([]byte, HEADER_SIZE)
+	_, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("DelDiskData error: %s", err.Error())
 	}
 
-	header, err := DeserializeHeader(bufHeader)
-	if err != nil {
-		return nil, err
+	reader := bytes.NewReader(buf)
+	hdr := &DskDataHdr{}
+	if err := binary.Read(reader, BINARY_ORDER, hdr); err != nil {
+		return fmt.Errorf("DelDiskData error: %s", err.Error())
 	}
 
-	bufData := make([]byte, header.Size)
-	_, err = d.File.ReadAt(bufData, addr+HEADER_SIZE)
-	if err != nil {
-		return nil, err
+	switch hdr.RecType {
+	case DT_LIST_PAGE:
+		buf = make([]byte, LINEAR_DISKDATA_SIZE)
+	case DT_TREE_PAGE:
+		buf = make([]byte, LINEAR_DISKDATA_SIZE)
+	default:
+		return fmt.Errorf("DelDiskData error: invalid datatype stored in disk")
 	}
 
-	data, err := DeserializeData(bufData, header.Type)
+	dskData, err := DeserializeDskData(buf)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("DelDiskData error: %s", err.Error())
+	}
+	dskData.RecHead.Deleted = true
+	buf, err = SerializeDiskData(dskData)
+	if err != nil {
+		return fmt.Errorf("DelDiskData error: %s", err.Error())
 	}
 
-	return &DiskData{
-		Data:   data,
-		Header: *header,
-	}, nil
+	_, err = d.FilObj.WriteAt(buf, int64(d.Cursor))
+	if err != nil {
+		return fmt.Errorf("DelDiskData error, write error: %s", err.Error())
+	}
+	return nil
 
 }
