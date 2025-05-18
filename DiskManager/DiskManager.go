@@ -24,6 +24,7 @@ func InitDiskManager(fileName string, tblType int) (*DiskManager, error) {
 	}
 	size := info.Size()
 
+	var tblHead *TableHeader = &TableHeader{}
 	buf := make([]byte, TBL_HEAD_SIZE)
 	n, err := file.Read(buf)
 	if errors.Is(err, io.EOF) {
@@ -31,17 +32,18 @@ func InitDiskManager(fileName string, tblType int) (*DiskManager, error) {
 		fmt.Printf("InitDiskManager read error: %s\n ...creating mode... \n", err.Error())
 
 		b := new(bytes.Buffer)
-		tblHdr := &TableHeader{RootAddr: int32(TBL_HEAD_SIZE)}
+		tblHead.RootAddr = int32(TBL_HEAD_SIZE)
 		switch tblType {
 		case DT_LIST_PAGE:
-			tblHdr.IsLinear = true
+			tblHead.IsLinear = true
 		case DT_TREE_PAGE:
-			tblHdr.IsLinear = false
+			tblHead.IsLinear = false
 		default:
 			return nil, fmt.Errorf("InitDiskManager error: invalid table type")
 		}
 
-		binary.Write(b, BINARY_ORDER, tblHdr)
+		binary.Write(b, BINARY_ORDER, tblHead)
+		fmt.Printf("%+v %+v\n", b.Bytes(), tblHead)
 
 		_, err = file.Write(b.Bytes())
 		if err != nil {
@@ -52,14 +54,14 @@ func InitDiskManager(fileName string, tblType int) (*DiskManager, error) {
 		return nil, fmt.Errorf("InitDiskManager error: %w", err)
 	} else if n != TBL_HEAD_SIZE {
 		return nil, fmt.Errorf("InitDiskManager error, invalid header size: expected %d got %d", TBL_HEAD_SIZE, n)
-	}
+	} else {
 
-	var tblHead *TableHeader = &TableHeader{}
-	reader := bytes.NewReader(buf)
-	if err := binary.Read(reader, BINARY_ORDER, tblHead); err != nil {
-		return nil, fmt.Errorf("InitDiskManager error: %w", err)
+		reader := bytes.NewReader(buf)
+		if err := binary.Read(reader, BINARY_ORDER, tblHead); err != nil {
+			return nil, fmt.Errorf("InitDiskManager error: %w", err)
+		}
+		fmt.Printf("%v %+v\n", buf, tblHead)
 	}
-	fmt.Printf("%v %+v\n", buf, tblHead)
 	return &DiskManager{
 		FilObj: file,
 		SrtOff: tblHead.RootAddr,
@@ -128,7 +130,7 @@ func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
 		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
 	}
 	fmt.Printf("written %d\n", n)
-	fmt.Printf("written %d\n", LINEAR_PAGE_SIZE)
+	fmt.Printf("expected %d\n", TBL_HEAD_SIZE+LINEAR_PAGE_SIZE)
 	d.EndOff += int32(binary.Size(dskData))
 
 	return dskData, nil
