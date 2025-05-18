@@ -6,6 +6,14 @@ import (
 	"fmt"
 )
 
+func IsNodeEmpty(n DataNode) bool {
+	empty := [32]byte{}
+	if n.Key == 0 && n.Val == empty {
+		return true
+	}
+	return false
+}
+
 func SerializeDiskData(data *DiskData) ([]byte, error) {
 
 	if data == nil {

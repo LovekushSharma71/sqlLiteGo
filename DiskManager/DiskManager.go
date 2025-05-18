@@ -103,6 +103,7 @@ func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
 	}
+	d.EndOff += int32(binary.Size(dskData))
 
 	return dskData, nil
 }
@@ -201,4 +202,40 @@ func (d *DiskManager) DelDiskData() error {
 	}
 	return nil
 
+}
+
+func (d *DiskManager) WrtDiskHeader(head TableHeader) error {
+
+	buf := new(bytes.Buffer)
+
+	err := binary.Write(buf, BINARY_ORDER, head)
+	if err != nil {
+		return fmt.Errorf("WrtDiskHeader error: %s", err.Error())
+	}
+	_, err = d.FilObj.WriteAt(buf.Bytes(), 0)
+	if err != nil {
+		return fmt.Errorf("WrtDiskHeader error: %s", err.Error())
+	}
+	return nil
+}
+
+func (d *DiskManager) GetDiskHeader() (*TableHeader, error) {
+
+	buf := make([]byte, TBL_HEAD_SIZE)
+
+	n, err := d.FilObj.Read(buf)
+	if err != nil {
+		return nil, fmt.Errorf("GetDiskHeader error: %s", err.Error())
+	}
+	if n != TBL_HEAD_SIZE {
+		return nil, fmt.Errorf("GetDiskHeader error: invalid table head size in file")
+	}
+
+	var head *TableHeader
+	reader := bytes.NewReader(buf)
+	err = binary.Read(reader, BINARY_ORDER, head)
+	if err != nil {
+		return nil, fmt.Errorf("GetDiskHeader error: %s", err.Error())
+	}
+	return head, nil
 }
