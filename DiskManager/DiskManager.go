@@ -3,40 +3,63 @@ package diskmanager
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"sync"
 )
 
-func InitDiskManager(fileName string) (*DiskManager, error) {
+func InitDiskManager(fileName string, tblType int) (*DiskManager, error) {
 
 	file, err := os.OpenFile(DB_FILE+fileName, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
-		return nil, fmt.Errorf("opening file %s: %w", fileName, err)
+		return nil, fmt.Errorf("InitDiskManger error, in opening file %s: %w", fileName, err)
 	}
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("InitDiskManager error: %w", err)
 	}
 	size := info.Size()
 
 	buf := make([]byte, TBL_HEAD_SIZE)
 	n, err := file.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-	if n != TBL_HEAD_SIZE {
-		return nil, fmt.Errorf("invalid header size: expected %d got %d", TBL_HEAD_SIZE, n)
+	if errors.Is(err, io.EOF) {
+
+		fmt.Printf("InitDiskManager read error: %s\n ...creating mode... \n", err.Error())
+
+		b := new(bytes.Buffer)
+		tblHdr := &TableHeader{RootAddr: int32(TBL_HEAD_SIZE)}
+		switch tblType {
+		case DT_LIST_PAGE:
+			tblHdr.IsLinear = true
+		case DT_TREE_PAGE:
+			tblHdr.IsLinear = false
+		default:
+			return nil, fmt.Errorf("InitDiskManager error: invalid table type")
+		}
+
+		binary.Write(b, BINARY_ORDER, tblHdr)
+
+		_, err = file.Write(b.Bytes())
+		if err != nil {
+			return nil, fmt.Errorf("InitDiskManager error: %w", err)
+		}
+
+	} else if err != nil {
+		return nil, fmt.Errorf("InitDiskManager error: %w", err)
+	} else if n != TBL_HEAD_SIZE {
+		return nil, fmt.Errorf("InitDiskManager error, invalid header size: expected %d got %d", TBL_HEAD_SIZE, n)
 	}
 
 	var tblHead *TableHeader = &TableHeader{}
 	reader := bytes.NewReader(buf)
 	if err := binary.Read(reader, BINARY_ORDER, tblHead); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("InitDiskManager error: %w", err)
 	}
-
+	fmt.Printf("%v %+v\n", buf, tblHead)
 	return &DiskManager{
 		FilObj: file,
 		SrtOff: tblHead.RootAddr,
@@ -51,14 +74,14 @@ func (d *DiskManager) GetDiskData() (*DiskData, error) {
 
 	var buf []byte
 	if d.IsTree {
-		buf = make([]byte, TREE_DISKDATA_SIZE)
+		buf = make([]byte, HEADER_SIZE+TREE_DISKDATA_SIZE)
 	} else {
-		buf = make([]byte, LINEAR_DISKDATA_SIZE)
+		buf = make([]byte, HEADER_SIZE+LINEAR_DISKDATA_SIZE)
 	}
 
 	n, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
 	if err != nil {
-		return nil, fmt.Errorf("GetDiskData error: %s", err.Error())
+		return nil, fmt.Errorf("GetDiskData error, read error: %w", err)
 	}
 	if n != len(buf) {
 		return nil, fmt.Errorf("GetDiskData error, invalid length read: expected len %d got %d", len(buf), n)
@@ -66,7 +89,7 @@ func (d *DiskManager) GetDiskData() (*DiskData, error) {
 
 	data, err := DeserializeDskData(buf)
 	if err != nil {
-		return nil, fmt.Errorf("GetDiskData error: %s", err.Error())
+		return nil, fmt.Errorf("GetDiskData error, deserialization error: %w", err)
 	}
 	return data, nil
 }
@@ -99,10 +122,12 @@ func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
 	}
-	_, err = d.FilObj.WriteAt(buf, int64(dskData.RecHead.RecAddr))
+	n, err := d.FilObj.WriteAt(buf, int64(dskData.RecHead.RecAddr))
 	if err != nil {
 		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
 	}
+	fmt.Printf("written %d\n", n)
+	fmt.Printf("written %d\n", LINEAR_PAGE_SIZE)
 	d.EndOff += int32(binary.Size(dskData))
 
 	return dskData, nil

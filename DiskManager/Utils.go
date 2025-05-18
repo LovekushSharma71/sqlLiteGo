@@ -62,14 +62,14 @@ func DeserializeDskData(buf []byte) (*DiskData, error) {
 	reader := bytes.NewReader(buf)
 
 	if err := binary.Read(reader, BINARY_ORDER, data.RecHead); err != nil {
-		return nil, fmt.Errorf("DiskData deserialisation error, reading RecHead: %s", err.Error())
+		return nil, fmt.Errorf("DiskData deserialisation error, reading RecHead: %w", err)
 	}
 
 	switch data.RecHead.RecType {
 	case DT_LIST_PAGE:
 		var listpge *ListPage = &ListPage{}
 		if err := binary.Read(reader, BINARY_ORDER, listpge); err != nil {
-			return nil, fmt.Errorf("DiskData deserialisation error, reading PageData(DT_LIST_PAGE): %s", err.Error())
+			return nil, fmt.Errorf("DiskData deserialisation error, reading PageData(DT_LIST_PAGE): %w", err)
 		}
 
 		data.RecData = listpge
@@ -78,7 +78,7 @@ func DeserializeDskData(buf []byte) (*DiskData, error) {
 		var treepge *TreePage = &TreePage{}
 
 		if err := binary.Read(reader, BINARY_ORDER, treepge); err != nil {
-			return nil, fmt.Errorf("DiskData deserialisation error, reading PageData(DT_TREE_PAGE): %s", err.Error())
+			return nil, fmt.Errorf("DiskData deserialisation error, reading PageData(DT_TREE_PAGE): %w", err)
 		}
 
 		data.RecData = treepge

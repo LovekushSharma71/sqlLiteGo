@@ -1,7 +1,9 @@
 package diskmanager
 
 import (
+	"errors"
 	"fmt"
+	"io"
 )
 
 func (t *DiskManager) Insert(key int32, val string) error {
@@ -13,46 +15,57 @@ func (t *DiskManager) Insert(key int32, val string) error {
 	var buf [32]byte
 	copy(buf[:], []byte(val))
 	t.Cursor = t.EndOff - int32(LINEAR_PAGE_SIZE)
+	if t.Cursor < int32(TBL_HEAD_SIZE) {
+		t.Cursor = t.SrtOff
+	}
 	dskData, err := t.GetDiskData()
-	if err != nil {
-		return fmt.Errorf("ListInsert error: %s", err)
-	}
-	nodes := dskData.RecData.(ListPage).Data
-	var ind int = -1
-	for i := 0; i < MAX_KEYS; i++ {
-		if IsNodeEmpty(nodes[i]) {
-			ind = i
-		}
-	}
-	if ind != -1 {
-		nodes[ind] = DataNode{
-			Key: key,
-			Val: buf,
-		}
-		dskData.RecData = nodes
-		err := t.EdtDiskData(dskData.RecData)
-		if err != nil {
-			return fmt.Errorf("ListInsert error: %s", err)
-		}
-	} else {
-		nodes[0] = DataNode{
-			Key: key,
-			Val: buf,
-		}
-		t.Cursor = t.EndOff
-		dsk, err := t.WrtDiskData(ListPage{
+	if errors.Is(err, io.EOF) {
+		t.WrtDiskData(ListPage{
 			Head: ListHead{
-				Parent: dskData.RecHead.RecAddr,
+				Parent: -1,
 			},
-			Data: nodes,
+			Data: [MAX_KEYS]DataNode{{Key: key, Val: buf}},
 			Chld: t.EndOff,
 		})
-		if err != nil {
-			return fmt.Errorf("ListInsert error: %s", err)
+	} else if err != nil {
+		return fmt.Errorf("ListInsert error: %s", err)
+	} else {
+		nodes := dskData.RecData.(ListPage).Data
+		var ind int = -1
+		for i := 0; i < MAX_KEYS; i++ {
+			if IsNodeEmpty(nodes[i]) {
+				ind = i
+			}
 		}
-		fmt.Printf("List Node Inserted in disk:%+v", dsk)
+		if ind != -1 {
+			nodes[ind] = DataNode{
+				Key: key,
+				Val: buf,
+			}
+			dskData.RecData = nodes
+			err := t.EdtDiskData(dskData.RecData)
+			if err != nil {
+				return fmt.Errorf("ListInsert error: %s", err)
+			}
+		} else {
+			nodes[0] = DataNode{
+				Key: key,
+				Val: buf,
+			}
+			t.Cursor = t.EndOff
+			dsk, err := t.WrtDiskData(ListPage{
+				Head: ListHead{
+					Parent: dskData.RecHead.RecAddr,
+				},
+				Data: nodes,
+				Chld: t.EndOff,
+			})
+			if err != nil {
+				return fmt.Errorf("ListInsert error: %s", err)
+			}
+			fmt.Printf("List Node Inserted in disk:%+v", dsk)
+		}
 	}
-
 	return nil
 }
 
@@ -146,9 +159,10 @@ func (t *DiskManager) Delete(key int32) error {
 
 }
 
-func (t *DiskManager) SelectAll(key int32) error {
+func (t *DiskManager) SelectAll() error {
 
 	for t.Cursor = t.SrtOff; t.Cursor < t.EndOff; {
+		fmt.Println(t.Cursor)
 		dsk, err := t.GetDiskData()
 		if err != nil {
 			return fmt.Errorf("ListSelect error: %s", err.Error())

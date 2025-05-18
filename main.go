@@ -1,5 +1,23 @@
 package main
 
+import diskmanager "db/DiskManager"
+
+func main() {
+	t, err := diskmanager.InitDiskManager("test", diskmanager.DT_LIST_PAGE)
+	if err != nil {
+		panic(err)
+	}
+
+	err = t.Insert(1, "val1")
+	if err != nil {
+		panic(err)
+	}
+	err = t.SelectAll()
+	if err != nil {
+		panic(err)
+	}
+}
+
 // import (
 // 	"bufio"
 // 	"fmt"
@@ -82,18 +100,18 @@ package main
 // 	}
 // }
 
-func main() {
+// func main() {
 
-	// dsk, err := dm.InitDiskManager("test")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer dsk.Close()
+// dsk, err := dm.InitDiskManager("test")
+// if err != nil {
+// 	panic(err)
+// }
+// defer dsk.Close()
 
-	// t.Insert(1, "val1")
-	// t.Select()
+// t.Insert(1, "val1")
+// t.Select()
 
-	// t.Insert(2, "val2")
-	// t.Select()
+// t.Insert(2, "val2")
+// t.Select()
 
-}
+// }
