@@ -70,6 +70,7 @@ func InitDiskManager(fileName string, tblType int) (*DiskManager, error) {
 	}, nil
 }
 
+// TODO: resolve deserialisation error
 func (d *DiskManager) GetDiskData() (*DiskData, error) {
 
 	var buf []byte
