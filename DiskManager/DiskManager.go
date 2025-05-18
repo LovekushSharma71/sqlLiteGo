@@ -26,7 +26,7 @@ func InitDiskManager(fileName string, tblType int) (*DiskManager, error) {
 
 	var tblHead *TableHeader = &TableHeader{}
 	buf := make([]byte, TBL_HEAD_SIZE)
-	n, err := file.Read(buf)
+	n, err := file.ReadAt(buf, 0)
 	if errors.Is(err, io.EOF) {
 
 		fmt.Printf("InitDiskManager read error: %s\n ...creating mode... \n", err.Error())
@@ -77,9 +77,9 @@ func (d *DiskManager) GetDiskData() (*DiskData, error) {
 
 	var buf []byte
 	if d.IsTree {
-		buf = make([]byte, HEADER_SIZE+TREE_DISKDATA_SIZE)
+		buf = make([]byte, TREE_DISKDATA_SIZE)
 	} else {
-		buf = make([]byte, HEADER_SIZE+LINEAR_DISKDATA_SIZE)
+		buf = make([]byte, LINEAR_DISKDATA_SIZE)
 	}
 
 	n, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
@@ -130,7 +130,7 @@ func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
 		return nil, fmt.Errorf("WrtDiskData error: %s", err.Error())
 	}
 	fmt.Printf("written %d\n", n)
-	fmt.Printf("expected %d\n", TBL_HEAD_SIZE+LINEAR_PAGE_SIZE)
+	fmt.Printf("expected %d\n", LINEAR_DISKDATA_SIZE)
 	d.EndOff += int32(binary.Size(dskData))
 
 	return dskData, nil
