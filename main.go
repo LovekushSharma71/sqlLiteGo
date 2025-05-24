@@ -1,21 +1,32 @@
 package main
 
-import diskmanager "db/DiskManager"
+import (
+	diskmanager "db/DiskManager"
+	"fmt"
+)
 
 func main() {
-	t, err := diskmanager.InitDiskManager("test", diskmanager.DT_LIST_PAGE)
+	t, err := diskmanager.InitDiskManager("test")
 	if err != nil {
 		panic(err)
 	}
+	fmt.Printf("err:%+v\n", t.Insert(1, "val1"))
+	fmt.Printf("err:%+v\n", t.Insert(2, "val2"))
+	fmt.Printf("err:%+v\n", t.Insert(3, "val3"))
+	fmt.Printf("err:%+v\n", t.Insert(4, "val4"))
+	fmt.Printf("err:%+v\n", t.Insert(5, "val5"))
+	fmt.Printf("err:%+v\n", t.Insert(6, "val6"))
+	fmt.Printf("err:%+v\n", t.SelectAll())
+	fmt.Printf("err:%+v\n", t.Update(1, "value1"))
+	fmt.Printf("err:%+v\n", t.Update(2, "value2"))
+	fmt.Printf("err:%+v\n", t.Update(3, "value3"))
+	fmt.Printf("err:%+v\n", t.Update(4, "value4"))
+	fmt.Printf("err:%+v\n", t.Update(5, "value5"))
+	fmt.Printf("err:%+v\n", t.Update(6, "value6"))
+	fmt.Printf("err:%+v\n", t.SelectAll())
+	fmt.Printf("err:%+v\n", t.Delete(1))
+	fmt.Printf("err:%+v\n", t.SelectAll())
 
-	err = t.Insert(1, "val1")
-	if err != nil {
-		panic(err)
-	}
-	err = t.SelectAll()
-	if err != nil {
-		panic(err)
-	}
 }
 
 // import (

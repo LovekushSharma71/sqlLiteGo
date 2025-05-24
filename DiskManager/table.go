@@ -1,6 +1,7 @@
 package diskmanager
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -14,19 +15,34 @@ func (t *DiskManager) Insert(key int32, val string) error {
 
 	var buf [32]byte
 	copy(buf[:], []byte(val))
-	t.Cursor = t.EndOff - int32(LINEAR_PAGE_SIZE)
-	if t.Cursor < int32(TBL_HEAD_SIZE) {
-		t.Cursor = t.SrtOff
+	t.Cursor = t.SrtOff
+	for {
+		dsk, err := t.GetDiskData()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("ListInsert error: %w", err)
+		}
+		lp := dsk.RecData.(ListPage)
+		if lp.Chld == -1 {
+			break
+		}
+		t.Cursor = lp.Chld
 	}
+
 	dskData, err := t.GetDiskData()
 	if errors.Is(err, io.EOF) {
-		t.WrtDiskData(ListPage{
+		_, err := t.WrtDiskData(ListPage{
 			Head: ListHead{
 				Parent: -1,
 			},
 			Data: [MAX_KEYS]DataNode{{Key: key, Val: buf}},
-			Chld: t.EndOff,
+			Chld: -1,
 		})
+		if err != nil {
+			return fmt.Errorf("ListInsert error: %w", err)
+		}
 	} else if err != nil {
 		return fmt.Errorf("ListInsert error: %s", err)
 	} else {
@@ -35,35 +51,38 @@ func (t *DiskManager) Insert(key int32, val string) error {
 		for i := 0; i < MAX_KEYS; i++ {
 			if IsNodeEmpty(nodes[i]) {
 				ind = i
+				break
 			}
 		}
+		listPage := dskData.RecData.(ListPage)
 		if ind != -1 {
-			nodes[ind] = DataNode{
+			listPage.Data[ind] = DataNode{
 				Key: key,
 				Val: buf,
-			}
-			dskData.RecData = nodes
-			err := t.EdtDiskData(dskData.RecData)
-			if err != nil {
-				return fmt.Errorf("ListInsert error: %s", err)
 			}
 		} else {
-			nodes[0] = DataNode{
+
+			newNodes := [MAX_KEYS]DataNode{}
+			newNodes[0] = DataNode{
 				Key: key,
 				Val: buf,
 			}
-			t.Cursor = t.EndOff
 			dsk, err := t.WrtDiskData(ListPage{
 				Head: ListHead{
 					Parent: dskData.RecHead.RecAddr,
 				},
-				Data: nodes,
-				Chld: t.EndOff,
+				Data: newNodes,
+				Chld: -1,
 			})
+			listPage.Chld = dsk.RecHead.RecAddr
 			if err != nil {
 				return fmt.Errorf("ListInsert error: %s", err)
 			}
 			fmt.Printf("List Node Inserted in disk:%+v", dsk)
+		}
+		err := t.EdtDiskData(listPage)
+		if err != nil {
+			return fmt.Errorf("ListInsert error: %s", err)
 		}
 	}
 	return nil
@@ -71,7 +90,8 @@ func (t *DiskManager) Insert(key int32, val string) error {
 
 func (t *DiskManager) Select(key int32) ([32]byte, error) {
 
-	for t.Cursor = t.SrtOff; t.Cursor < t.EndOff; {
+	t.Cursor = t.SrtOff
+	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
 			return [32]byte{}, fmt.Errorf("ListSelect error: %s", err.Error())
@@ -82,6 +102,9 @@ func (t *DiskManager) Select(key int32) ([32]byte, error) {
 				return lp.Data[i].Val, nil
 			}
 		}
+		if lp.Chld == -1 {
+			break
+		}
 		t.Cursor = lp.Chld
 	}
 	return [32]byte{}, nil
@@ -89,7 +112,12 @@ func (t *DiskManager) Select(key int32) ([32]byte, error) {
 
 func (t *DiskManager) Update(key int32, val string) error {
 
-	for t.Cursor = t.SrtOff; t.Cursor < t.EndOff; {
+	if len(val) > 32 {
+		return fmt.Errorf("ListInsert error: val size length is greater than 32")
+	}
+
+	t.Cursor = t.SrtOff
+	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
 			return fmt.Errorf("ListUpdate error: %s", err.Error())
@@ -112,6 +140,9 @@ func (t *DiskManager) Update(key int32, val string) error {
 			}
 			return nil
 		}
+		if lp.Chld == -1 {
+			break
+		}
 		t.Cursor = lp.Chld
 
 	}
@@ -120,7 +151,8 @@ func (t *DiskManager) Update(key int32, val string) error {
 
 func (t *DiskManager) Delete(key int32) error {
 
-	for t.Cursor = t.SrtOff; t.Cursor < t.EndOff; {
+	t.Cursor = t.SrtOff
+	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
 			return fmt.Errorf("ListDelete error: %s", err.Error())
@@ -153,6 +185,9 @@ func (t *DiskManager) Delete(key int32) error {
 			}
 			return nil
 		}
+		if lp.Chld == -1 {
+			break
+		}
 		t.Cursor = lp.Chld
 	}
 	return fmt.Errorf("ListDelete error: key not found")
@@ -161,7 +196,8 @@ func (t *DiskManager) Delete(key int32) error {
 
 func (t *DiskManager) SelectAll() error {
 
-	for t.Cursor = t.SrtOff; t.Cursor < t.EndOff; {
+	t.Cursor = t.SrtOff
+	for {
 		fmt.Println(t.Cursor)
 		dsk, err := t.GetDiskData()
 		if err != nil {
@@ -169,7 +205,10 @@ func (t *DiskManager) SelectAll() error {
 		}
 		lp := dsk.RecData.(ListPage)
 		for i := 0; i < MAX_KEYS; i++ {
-			fmt.Printf("key: %d , Value: %s", lp.Data[i].Key, lp.Data[i].Val)
+			fmt.Printf("key: %d , Value: %s\n", lp.Data[i].Key, string(bytes.TrimRight(lp.Data[i].Val[:], "\x00")))
+		}
+		if lp.Chld == -1 {
+			break
 		}
 		t.Cursor = lp.Chld
 

@@ -7,13 +7,16 @@ import (
 )
 
 var (
-	HEADER_SIZE          int = binary.Size(DskDataHdr{})
-	BINARY_ORDER             = binary.BigEndian
-	TBL_HEAD_SIZE        int = binary.Size(TableHeader{})
-	TREE_PAGE_SIZE       int = binary.Size(TreePage{})
-	LINEAR_PAGE_SIZE     int = binary.Size(ListPage{})
-	TREE_DISKDATA_SIZE   int = HEADER_SIZE + TREE_PAGE_SIZE
-	LINEAR_DISKDATA_SIZE int = HEADER_SIZE + LINEAR_PAGE_SIZE
+	TREE_FILE            string = "Data/tree"
+	LIST_FILE            string = "Data/list"
+	TEST_FILE            string = "Data/test"
+	HEADER_SIZE          int    = binary.Size(DskDataHdr{})
+	BINARY_ORDER                = binary.BigEndian
+	TBL_HEAD_SIZE        int    = binary.Size(TableHeader{})
+	TREE_PAGE_SIZE       int    = binary.Size(TreePage{})
+	LINEAR_PAGE_SIZE     int    = binary.Size(ListPage{})
+	TREE_DISKDATA_SIZE   int    = HEADER_SIZE + TREE_PAGE_SIZE
+	LINEAR_DISKDATA_SIZE int    = HEADER_SIZE + LINEAR_PAGE_SIZE
 )
 
 const (
