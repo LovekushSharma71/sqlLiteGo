@@ -48,7 +48,7 @@ func (d *DiskManager) GetDiskData() (*DiskData, error) {
 	} else {
 		buf = make([]byte, LINEAR_DISKDATA_SIZE)
 	}
-
+	// fmt.Println(d.Cursor)
 	n, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
 	if err != nil {
 		return nil, fmt.Errorf("GetDiskData error, read error: %w", err)
@@ -224,17 +224,17 @@ func (d *DiskManager) GetDiskHeader() (*TableHeader, error) {
 
 	n, err := d.FilObj.ReadAt(buf, 0)
 	if err != nil {
-		return nil, fmt.Errorf("GetDiskHeader error: %s", err.Error())
+		return nil, fmt.Errorf("GetDiskHeader error: %w", err)
 	}
 	if n != TBL_HEAD_SIZE {
 		return nil, fmt.Errorf("GetDiskHeader error: invalid table head size in file")
 	}
 
-	var head *TableHeader
+	var head *TableHeader = &TableHeader{}
 	reader := bytes.NewReader(buf)
 	err = binary.Read(reader, BINARY_ORDER, head)
 	if err != nil {
-		return nil, fmt.Errorf("GetDiskHeader error: %s", err.Error())
+		return nil, fmt.Errorf("GetDiskHeader error: %w", err)
 	}
 	return head, nil
 }

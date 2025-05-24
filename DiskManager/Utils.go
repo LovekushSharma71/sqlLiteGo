@@ -3,7 +3,9 @@ package diskmanager
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"os"
 )
 
 func IsNodeEmpty(n DataNode) bool {
@@ -22,6 +24,17 @@ func IsNodesEmpty(nodes [MAX_KEYS]DataNode) bool {
 		}
 	}
 	return true
+}
+
+func DBExists(name string) (bool, error) {
+	_, err := os.Stat(name)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func SerializeDiskData(data *DiskData) ([]byte, error) {

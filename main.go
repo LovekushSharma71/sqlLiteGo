@@ -6,10 +6,16 @@ import (
 )
 
 func main() {
-	t, err := diskmanager.InitDiskManager("test")
+
+	fmt.Println(diskmanager.CreateDatabase("test", "list"))
+	t, err := diskmanager.InitDatabase("test")
 	if err != nil {
 		panic(err)
 	}
+	// t, err := diskmanager.InitDiskManager("test")
+	// if err != nil {
+	// 	panic(err)
+	// }
 	fmt.Printf("err:%+v\n", t.Insert(1, "val1"))
 	fmt.Printf("err:%+v\n", t.Insert(2, "val2"))
 	fmt.Printf("err:%+v\n", t.Insert(3, "val3"))
@@ -26,7 +32,7 @@ func main() {
 	fmt.Printf("err:%+v\n", t.SelectAll())
 	fmt.Println(t.Select(1))
 	fmt.Printf("err:%+v\n", t.Delete(3))
-	fmt.Printf("err:%+v\n", t.Delete(4))
+	fmt.Printf("err:%+v\n", t.Delete(2))
 	fmt.Printf("err:%+v\n", t.Delete(1))
 	fmt.Printf("err:%+v\n", t.SelectAll())
 

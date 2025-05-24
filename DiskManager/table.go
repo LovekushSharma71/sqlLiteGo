@@ -168,12 +168,12 @@ func (t *DiskManager) Delete(key int32) error {
 		}
 		if isDeleted {
 			if IsNodesEmpty(lp.Data) {
-				fmt.Println("inside delete page routine")
+				// fmt.Println("inside delete page routine")
 				parentAddr := lp.Head.Parent
 				childAddr := lp.Chld
 				currentAddr := dsk.RecHead.RecAddr
-				fmt.Println("address")
-				fmt.Println(parentAddr, childAddr, currentAddr)
+				// fmt.Println("address")
+				// fmt.Println(parentAddr, childAddr, currentAddr)
 				if parentAddr != -1 {
 					t.Cursor = parentAddr
 					dskP, err := t.GetDiskData()
@@ -187,6 +187,17 @@ func (t *DiskManager) Delete(key int32) error {
 					if err != nil {
 						return fmt.Errorf("ListDelete error: %w", err)
 					}
+				} else {
+					head, err := t.GetDiskHeader()
+					if err != nil {
+						return fmt.Errorf("ListDelete error: %w", err)
+					}
+					head.RootAddr = childAddr
+					err = t.WrtDiskHeader(*head)
+					if err != nil {
+						return fmt.Errorf("ListDelete error: %w", err)
+					}
+					t.SrtOff = childAddr
 				}
 
 				if childAddr != -1 {

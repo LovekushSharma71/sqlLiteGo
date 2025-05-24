@@ -10,6 +10,7 @@ var (
 	TREE_FILE            string = "Data/tree"
 	LIST_FILE            string = "Data/list"
 	TEST_FILE            string = "Data/test"
+	DB_FOLDER            string = "Data/database"
 	HEADER_SIZE          int    = binary.Size(DskDataHdr{})
 	BINARY_ORDER                = binary.BigEndian
 	TBL_HEAD_SIZE        int    = binary.Size(TableHeader{})
