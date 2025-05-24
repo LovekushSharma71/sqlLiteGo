@@ -24,6 +24,9 @@ func main() {
 	fmt.Printf("err:%+v\n", t.Update(5, "value5"))
 	fmt.Printf("err:%+v\n", t.Update(6, "value6"))
 	fmt.Printf("err:%+v\n", t.SelectAll())
+	fmt.Println(t.Select(1))
+	fmt.Printf("err:%+v\n", t.Delete(3))
+	fmt.Printf("err:%+v\n", t.Delete(4))
 	fmt.Printf("err:%+v\n", t.Delete(1))
 	fmt.Printf("err:%+v\n", t.SelectAll())
 

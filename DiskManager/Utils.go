@@ -14,6 +14,16 @@ func IsNodeEmpty(n DataNode) bool {
 	return false
 }
 
+func IsNodesEmpty(nodes [MAX_KEYS]DataNode) bool {
+
+	for _, node := range nodes {
+		if !IsNodeEmpty(node) {
+			return false
+		}
+	}
+	return true
+}
+
 func SerializeDiskData(data *DiskData) ([]byte, error) {
 
 	if data == nil {
@@ -60,7 +70,7 @@ func DeserializeDskData(buf []byte) (*DiskData, error) {
 
 	var data *DiskData = &DiskData{}
 	reader := bytes.NewReader(buf)
-	
+
 	if err := binary.Read(reader, BINARY_ORDER, &data.RecHead); err != nil {
 		return nil, fmt.Errorf("DiskData deserialisation error, reading RecHead: %w", err)
 	}

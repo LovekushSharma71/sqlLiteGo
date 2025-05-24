@@ -106,6 +106,7 @@ func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
 	return dskData, nil
 }
 
+// assume that cursor is set before
 func (d *DiskManager) EdtDiskData(data interface{}) error {
 
 	if data == nil {
@@ -167,7 +168,7 @@ func (d *DiskManager) DelDiskData() error {
 	buf := make([]byte, HEADER_SIZE)
 	_, err := d.FilObj.ReadAt(buf, int64(d.Cursor))
 	if err != nil {
-    return fmt.Errorf("DelDiskData error, reading full record for deletion: %w", err)
+		return fmt.Errorf("DelDiskData error, reading full record for deletion: %w", err)
 	}
 
 	reader := bytes.NewReader(buf)

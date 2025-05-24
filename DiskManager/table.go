@@ -88,18 +88,18 @@ func (t *DiskManager) Insert(key int32, val string) error {
 	return nil
 }
 
-func (t *DiskManager) Select(key int32) ([32]byte, error) {
+func (t *DiskManager) Select(key int32) (string, error) {
 
 	t.Cursor = t.SrtOff
 	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
-			return [32]byte{}, fmt.Errorf("ListSelect error: %s", err.Error())
+			return "", fmt.Errorf("ListSelect error: %s", err.Error())
 		}
 		lp := dsk.RecData.(ListPage)
 		for i := 0; i < MAX_KEYS; i++ {
 			if lp.Data[i].Key == key {
-				return lp.Data[i].Val, nil
+				return string(lp.Data[i].Val[:]), nil
 			}
 		}
 		if lp.Chld == -1 {
@@ -107,7 +107,7 @@ func (t *DiskManager) Select(key int32) ([32]byte, error) {
 		}
 		t.Cursor = lp.Chld
 	}
-	return [32]byte{}, nil
+	return "", nil
 }
 
 func (t *DiskManager) Update(key int32, val string) error {
@@ -161,27 +161,59 @@ func (t *DiskManager) Delete(key int32) error {
 		isDeleted := false
 		for i := 0; i < MAX_KEYS; i++ {
 			if lp.Data[i].Key == key {
-				if i == 0 {
-					t.Cursor = lp.Head.Parent
-					dsk, err = t.GetDiskData()
-					if err != nil {
-						return fmt.Errorf("ListDelete error: %s", err.Error())
-					}
-					tp := dsk.RecData.(ListPage)
-					tp.Chld = lp.Chld
-					dsk.RecData = tp
-
-				} else {
-					lp.Data[i] = DataNode{}
-				}
+				lp.Data[i] = DataNode{}
 				isDeleted = true
 				break
 			}
 		}
 		if isDeleted {
-			err := t.EdtDiskData(lp)
+			if IsNodesEmpty(lp.Data) {
+				fmt.Println("inside delete page routine")
+				parentAddr := lp.Head.Parent
+				childAddr := lp.Chld
+				currentAddr := dsk.RecHead.RecAddr
+				fmt.Println("address")
+				fmt.Println(parentAddr, childAddr, currentAddr)
+				if parentAddr != -1 {
+					t.Cursor = parentAddr
+					dskP, err := t.GetDiskData()
+					if err != nil {
+						return fmt.Errorf("ListDelete error: %w", err)
+					}
+					plp := dskP.RecData.(ListPage)
+					plp.Chld = childAddr
+					t.Cursor = parentAddr
+					err = t.EdtDiskData(plp)
+					if err != nil {
+						return fmt.Errorf("ListDelete error: %w", err)
+					}
+				}
+
+				if childAddr != -1 {
+					t.Cursor = childAddr
+					dskC, err := t.GetDiskData()
+					if err != nil {
+						return fmt.Errorf("ListDelete error: %w", err)
+					}
+					clp := dskC.RecData.(ListPage)
+					clp.Head.Parent = parentAddr
+					t.Cursor = childAddr
+					err = t.EdtDiskData(clp)
+					if err != nil {
+						return fmt.Errorf("ListDelete error: %w", err)
+					}
+				}
+
+				t.Cursor = currentAddr
+				err = t.DelDiskData()
+				if err != nil {
+					return fmt.Errorf("ListDelete error: %w", err)
+				}
+				return nil
+			}
+			err = t.EdtDiskData(lp)
 			if err != nil {
-				return fmt.Errorf("ListDelete error: %s", err.Error())
+				return fmt.Errorf("ListDelete error: %w", err)
 			}
 			return nil
 		}
@@ -198,14 +230,15 @@ func (t *DiskManager) SelectAll() error {
 
 	t.Cursor = t.SrtOff
 	for {
-		fmt.Println(t.Cursor)
 		dsk, err := t.GetDiskData()
 		if err != nil {
 			return fmt.Errorf("ListSelect error: %s", err.Error())
 		}
 		lp := dsk.RecData.(ListPage)
 		for i := 0; i < MAX_KEYS; i++ {
-			fmt.Printf("key: %d , Value: %s\n", lp.Data[i].Key, string(bytes.TrimRight(lp.Data[i].Val[:], "\x00")))
+			if !IsNodeEmpty(lp.Data[i]) {
+				fmt.Printf("key: %d , Value: %s\n", lp.Data[i].Key, string(bytes.TrimRight(lp.Data[i].Val[:], "\x00")))
+			}
 		}
 		if lp.Chld == -1 {
 			break
