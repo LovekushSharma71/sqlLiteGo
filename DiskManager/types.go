@@ -98,3 +98,11 @@ type DataNode struct {
 	Key int32
 	Val [32]byte
 }
+
+type Data interface {
+	GetListPage() ListPage
+}
+
+func (dsk *DiskData) GetListPage() ListPage {
+	return dsk.RecData.(ListPage)
+}

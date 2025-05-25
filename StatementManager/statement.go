@@ -1,6 +1,7 @@
 package main
 
 // import (
+// 	diskmanager "db/DiskManager"
 // 	"fmt"
 // 	"os"
 // 	"strconv"
@@ -26,10 +27,12 @@ package main
 // )
 
 // type StatementType int
+// type Table diskmanager.Table
+// type InputBuffer string
 
 // type Statement struct {
 // 	Type        StatementType
-// 	RowToInsert Row
+// 	Index int32
 // }
 
 // const (
@@ -39,7 +42,6 @@ package main
 
 // func DoMetaCommand(inp string, table *Table) int {
 // 	if inp == ".exit" {
-// 		table.SyncTable2File()
 // 		os.Exit(0)
 // 	}
 // 	return META_COMMAND_UNRECOGNIZED_COMMAND

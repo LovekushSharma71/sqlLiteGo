@@ -9,11 +9,59 @@ import (
 	"sync"
 )
 
-func InitDiskManager(fileName string) (*DiskManager, error) {
+func CreateDatabase(dbname string, dbtype string) error {
 
-	file, err := os.OpenFile(DB_FILE+fileName, os.O_CREATE|os.O_RDWR, 0666)
+	dbFile := DB_FOLDER + "/" + dbname
+	found, err := DBExists(dbFile)
+	if found {
+		return fmt.Errorf("CreateDatabase error: database already exists")
+	}
 	if err != nil {
-		return nil, fmt.Errorf("InitDiskManger error, in opening file %s: %w", fileName, err)
+		return fmt.Errorf("CreateDatabase error: %w", err)
+	}
+	file, err := os.OpenFile(dbFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return fmt.Errorf("CreateDatabase error, create file error: %w", err)
+	}
+
+	buf := new(bytes.Buffer)
+
+	tblHead := TableHeader{
+		RootAddr: int32(TBL_HEAD_SIZE),
+	}
+	switch dbtype {
+	case "tree":
+		tblHead.IsLinear = false
+	case "list":
+		tblHead.IsLinear = true
+	default:
+		return fmt.Errorf("CreateDatabase error: invalid table type")
+	}
+
+	err = binary.Write(buf, BINARY_ORDER, tblHead)
+	if err != nil {
+		return fmt.Errorf("CreateDatabase error, header to bytes failed: %w", err)
+	}
+
+	file.WriteAt(buf.Bytes(), 0)
+
+	return nil
+}
+
+func InitDatabase(dbname string) (*DiskManager, error) {
+
+	dbFile := DB_FOLDER + "/" + dbname
+	found, err := DBExists(dbFile)
+	if !found {
+		return nil, fmt.Errorf("InitDatabase error: database does not exists")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("InitDatabase error: %w", err)
+	}
+
+	file, err := os.OpenFile(dbFile, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("InitDatabase error, create file error: %w", err)
 	}
 
 	info, err := file.Stat()
@@ -22,24 +70,67 @@ func InitDiskManager(fileName string) (*DiskManager, error) {
 	}
 	size := info.Size()
 
-	var isTree bool
-	if fileName == TREE_FILE {
-		isTree = true
-	} else {
-		isTree = false
+	buf := make([]byte, TBL_HEAD_SIZE)
+
+	_, err = file.ReadAt(buf, 0)
+	if err != nil {
+		return nil, fmt.Errorf("InitDatabase error, read file error: %w", err)
 	}
 
-	return &DiskManager{
+	reader := bytes.NewReader(buf)
+	th := &TableHeader{}
+	err = binary.Read(reader, BINARY_ORDER, th)
+	if err != nil {
+		return nil, fmt.Errorf("InitDatabase error, header decode error: %w", err)
+	}
+
+	dskMan := &DiskManager{
 		FilObj: file,
-		SrtOff: 0,
-		Cursor: 0,
+		SrtOff: th.RootAddr,
+		Cursor: th.RootAddr,
 		EndOff: int32(size),
-		IsTree: isTree,
+		IsTree: !th.IsLinear,
 		MuLock: sync.Mutex{},
-	}, nil
+	}
+	return dskMan, nil
 }
 
-// TODO: resolve deserialisation error
+func (d *DiskManager) WrtDBHeader(head TableHeader) error {
+
+	buf := new(bytes.Buffer)
+
+	err := binary.Write(buf, BINARY_ORDER, head)
+	if err != nil {
+		return fmt.Errorf("WrtDiskHeader error: %s", err.Error())
+	}
+	_, err = d.FilObj.WriteAt(buf.Bytes(), 0)
+	if err != nil {
+		return fmt.Errorf("WrtDiskHeader error: %s", err.Error())
+	}
+	return nil
+}
+
+func (d *DiskManager) GetDBHeader() (*TableHeader, error) {
+
+	buf := make([]byte, TBL_HEAD_SIZE)
+
+	n, err := d.FilObj.ReadAt(buf, 0)
+	if err != nil {
+		return nil, fmt.Errorf("GetDiskHeader error: %w", err)
+	}
+	if n != TBL_HEAD_SIZE {
+		return nil, fmt.Errorf("GetDiskHeader error: invalid table head size in file")
+	}
+
+	var head *TableHeader = &TableHeader{}
+	reader := bytes.NewReader(buf)
+	err = binary.Read(reader, BINARY_ORDER, head)
+	if err != nil {
+		return nil, fmt.Errorf("GetDiskHeader error: %w", err)
+	}
+	return head, nil
+}
+
 func (d *DiskManager) GetDiskData() (*DiskData, error) {
 
 	var buf []byte
@@ -201,40 +292,4 @@ func (d *DiskManager) DelDiskData() error {
 		return fmt.Errorf("DelDiskData error, write error: %s", err.Error())
 	}
 	return nil
-}
-
-func (d *DiskManager) WrtDiskHeader(head TableHeader) error {
-
-	buf := new(bytes.Buffer)
-
-	err := binary.Write(buf, BINARY_ORDER, head)
-	if err != nil {
-		return fmt.Errorf("WrtDiskHeader error: %s", err.Error())
-	}
-	_, err = d.FilObj.WriteAt(buf.Bytes(), 0)
-	if err != nil {
-		return fmt.Errorf("WrtDiskHeader error: %s", err.Error())
-	}
-	return nil
-}
-
-func (d *DiskManager) GetDiskHeader() (*TableHeader, error) {
-
-	buf := make([]byte, TBL_HEAD_SIZE)
-
-	n, err := d.FilObj.ReadAt(buf, 0)
-	if err != nil {
-		return nil, fmt.Errorf("GetDiskHeader error: %w", err)
-	}
-	if n != TBL_HEAD_SIZE {
-		return nil, fmt.Errorf("GetDiskHeader error: invalid table head size in file")
-	}
-
-	var head *TableHeader = &TableHeader{}
-	reader := bytes.NewReader(buf)
-	err = binary.Read(reader, BINARY_ORDER, head)
-	if err != nil {
-		return nil, fmt.Errorf("GetDiskHeader error: %w", err)
-	}
-	return head, nil
 }

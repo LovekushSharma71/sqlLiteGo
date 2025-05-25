@@ -37,6 +37,13 @@ func DBExists(name string) (bool, error) {
 	return false, err
 }
 
+func String2ByteArr(str string) [32]byte {
+
+	var buf [32]byte
+	copy(buf[:], []byte(str))
+	return buf
+}
+
 func SerializeDiskData(data *DiskData) ([]byte, error) {
 
 	if data == nil {
