@@ -1,4 +1,4 @@
 # sqlLiteGo
 implement sqlLite in go
 TODO:
-beautify code, code btree
+dont allow duplicate, beautify code, code btree

@@ -13,8 +13,7 @@ func (t *DiskManager) Insert(key int32, val string) error {
 		return fmt.Errorf("ListInsert error: val size length is greater than 32")
 	}
 
-	var buf [32]byte
-	copy(buf[:], []byte(val))
+	buf := String2ByteArr(val)
 	t.Cursor = t.SrtOff
 	for {
 		dsk, err := t.GetDiskData()
@@ -113,7 +112,7 @@ func (t *DiskManager) Select(key int32) (string, error) {
 func (t *DiskManager) Update(key int32, val string) error {
 
 	if len(val) > 32 {
-		return fmt.Errorf("ListInsert error: val size length is greater than 32")
+		return fmt.Errorf("ListUpdate error: val size length is greater than 32")
 	}
 
 	t.Cursor = t.SrtOff
@@ -126,8 +125,7 @@ func (t *DiskManager) Update(key int32, val string) error {
 		isUpdated := false
 		for i := 0; i < MAX_KEYS; i++ {
 			if lp.Data[i].Key == key {
-				buf := [32]byte{}
-				copy(buf[:], []byte(val))
+				buf := String2ByteArr(val)
 				lp.Data[i].Val = buf
 				isUpdated = true
 				break
@@ -168,12 +166,9 @@ func (t *DiskManager) Delete(key int32) error {
 		}
 		if isDeleted {
 			if IsNodesEmpty(lp.Data) {
-				// fmt.Println("inside delete page routine")
 				parentAddr := lp.Head.Parent
 				childAddr := lp.Chld
 				currentAddr := dsk.RecHead.RecAddr
-				// fmt.Println("address")
-				// fmt.Println(parentAddr, childAddr, currentAddr)
 				if parentAddr != -1 {
 					t.Cursor = parentAddr
 					dskP, err := t.GetDiskData()

@@ -7,3 +7,14 @@ type Table interface {
 	Update(key int32, val string) error
 	SelectAll() error
 }
+
+// Compulsary initdb before initTable else it might cause some bugs
+func InitTable(d *DiskManager) Table {
+	if d.IsTree {
+		d.Cursor = d.SrtOff
+		return tree{
+			table: d,
+		}
+	}
+	return d
+}

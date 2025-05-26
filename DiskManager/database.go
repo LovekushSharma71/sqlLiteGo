@@ -23,6 +23,7 @@ func CreateDatabase(dbname string, dbtype string) error {
 	if err != nil {
 		return fmt.Errorf("CreateDatabase error, create file error: %w", err)
 	}
+	defer file.Close()
 
 	buf := new(bytes.Buffer)
 
@@ -43,7 +44,10 @@ func CreateDatabase(dbname string, dbtype string) error {
 		return fmt.Errorf("CreateDatabase error, header to bytes failed: %w", err)
 	}
 
-	file.WriteAt(buf.Bytes(), 0)
+	_, err = file.WriteAt(buf.Bytes(), 0)
+	if err != nil {
+		return fmt.Errorf("CreateDatabase error, write header failed: %w", err)
+	}
 
 	return nil
 }
@@ -172,10 +176,10 @@ func (d *DiskManager) WrtDiskData(data interface{}) (*DiskData, error) {
 	switch reflect.TypeOf(data) {
 	case reflect.TypeOf(TreePage{}):
 		dskData.RecHead.RecType = DT_TREE_PAGE
-		dskData.RecHead.RecSize = int32(LINEAR_PAGE_SIZE)
+		dskData.RecHead.RecSize = int32(TREE_PAGE_SIZE)
 	case reflect.TypeOf(ListPage{}):
 		dskData.RecHead.RecType = DT_LIST_PAGE
-		dskData.RecHead.RecSize = int32(TREE_PAGE_SIZE)
+		dskData.RecHead.RecSize = int32(LINEAR_PAGE_SIZE)
 	default:
 		return nil, fmt.Errorf("WrtDiskData error: data type %T not supported", data)
 	}

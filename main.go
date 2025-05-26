@@ -7,11 +7,12 @@ import (
 
 func main() {
 
-	fmt.Println(diskmanager.CreateDatabase("test", "list"))
-	t, err := diskmanager.InitDatabase("test")
+	fmt.Println(diskmanager.CreateDatabase("test", "tree"))
+	d, err := diskmanager.InitDatabase("test")
 	if err != nil {
 		panic(err)
 	}
+	t := diskmanager.InitTable(d)
 	// t, err := diskmanager.InitDiskManager("test")
 	// if err != nil {
 	// 	panic(err)
@@ -22,19 +23,19 @@ func main() {
 	fmt.Printf("err:%+v\n", t.Insert(4, "val4"))
 	fmt.Printf("err:%+v\n", t.Insert(5, "val5"))
 	fmt.Printf("err:%+v\n", t.Insert(6, "val6"))
-	fmt.Printf("err:%+v\n", t.SelectAll())
-	fmt.Printf("err:%+v\n", t.Update(1, "value1"))
-	fmt.Printf("err:%+v\n", t.Update(2, "value2"))
-	fmt.Printf("err:%+v\n", t.Update(3, "value3"))
-	fmt.Printf("err:%+v\n", t.Update(4, "value4"))
-	fmt.Printf("err:%+v\n", t.Update(5, "value5"))
-	fmt.Printf("err:%+v\n", t.Update(6, "value6"))
-	fmt.Printf("err:%+v\n", t.SelectAll())
-	fmt.Println(t.Select(1))
-	fmt.Printf("err:%+v\n", t.Delete(3))
-	fmt.Printf("err:%+v\n", t.Delete(2))
-	fmt.Printf("err:%+v\n", t.Delete(1))
-	fmt.Printf("err:%+v\n", t.SelectAll())
+	// fmt.Printf("err:%+v\n", t.SelectAll())
+	// fmt.Printf("err:%+v\n", t.Update(1, "value1"))
+	// fmt.Printf("err:%+v\n", t.Update(2, "value2"))
+	// fmt.Printf("err:%+v\n", t.Update(3, "value3"))
+	// fmt.Printf("err:%+v\n", t.Update(4, "value4"))
+	// fmt.Printf("err:%+v\n", t.Update(5, "value5"))
+	// fmt.Printf("err:%+v\n", t.Update(6, "value6"))
+	// fmt.Printf("err:%+v\n", t.SelectAll())
+	// fmt.Println(t.Select(1))
+	// fmt.Printf("err:%+v\n", t.Delete(3))
+	// fmt.Printf("err:%+v\n", t.Delete(2))
+	// fmt.Printf("err:%+v\n", t.Delete(1))
+	// fmt.Printf("err:%+v\n", t.SelectAll())
 
 }
 
