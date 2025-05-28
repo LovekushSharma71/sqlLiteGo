@@ -1,6 +1,7 @@
 package diskmanager
 
 type Table interface {
+	ResetCursor() error
 	Insert(key int32, val string) error
 	Select(key int32) (string, error)
 	Delete(key int32) error

@@ -7,6 +7,17 @@ import (
 	"io"
 )
 
+func (t *DiskManager) ResetCursor() error {
+	hdr, err := t.GetDBHeader()
+	if err != nil {
+		return fmt.Errorf("List ResetCursor Error:%w", err)
+	}
+
+	t.Cursor = hdr.RootAddr
+	t.SrtOff = hdr.RootAddr
+	return nil
+}
+
 func (t *DiskManager) Insert(key int32, val string) error {
 
 	if len(val) > 32 {

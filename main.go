@@ -17,11 +17,18 @@ func main() {
 	// if err != nil {
 	// 	panic(err)
 	// }
+
+	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(1, "val1"))
+	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(2, "val2"))
+	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(3, "val3"))
+	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(4, "val4"))
+	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(5, "val5"))
+	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(6, "val6"))
 	// fmt.Printf("err:%+v\n", t.SelectAll())
 	// fmt.Printf("err:%+v\n", t.Update(1, "value1"))
