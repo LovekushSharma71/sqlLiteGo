@@ -34,7 +34,6 @@ func (t tree) ResetCursor() error {
 	if err != nil {
 		return fmt.Errorf("Tree ResetCursor Error:%w", err)
 	}
-
 	t.table.Cursor = hdr.RootAddr
 	t.table.SrtOff = hdr.RootAddr
 	return nil
@@ -164,6 +163,9 @@ func (t tree) Insert(key int32, val string) error {
 	found := false
 	numValidKeys := 0
 	for i, v := range tp.Data {
+		if IsNodeEmpty(v) {
+			break
+		}
 		if v.Key > key {
 			found = true
 			t.table.Cursor = tp.Chld[i]
@@ -177,7 +179,7 @@ func (t tree) Insert(key int32, val string) error {
 	err = t.Insert(key, val)
 	t.table.Cursor = tmpCursor
 	fmt.Println("insert result", err)
-	if errors.As(err, &InsertKeyError{}) {
+	if errors.Is(err, &InsertKeyError{}) {
 		promtNode, chldAddr = err.(*InsertKeyError).PromotedNode, err.(*InsertKeyError).NewChildNode
 		key = promtNode.Key
 	} else if err != nil {
