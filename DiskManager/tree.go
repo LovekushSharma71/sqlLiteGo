@@ -66,7 +66,6 @@ func (t tree) Insert(key int32, val string) error {
 	}
 	tp := dsk.RecData.(TreePage)
 	if tp.Head.IsLeaf {
-		fmt.Println("inside leaf")
 		// if the current page is a leaf, we can insert directly
 		var NodeBuf []DataNode
 		isInserted := false
@@ -178,8 +177,7 @@ func (t tree) Insert(key int32, val string) error {
 	}
 	err = t.Insert(key, val)
 	t.table.Cursor = tmpCursor
-	fmt.Println("insert result", err)
-	if errors.Is(err, &InsertKeyError{}) {
+	if errors.As(err, new(*InsertKeyError)) {
 		promtNode, chldAddr = err.(*InsertKeyError).PromotedNode, err.(*InsertKeyError).NewChildNode
 		key = promtNode.Key
 	} else if err != nil {
@@ -200,21 +198,18 @@ func (t tree) Insert(key int32, val string) error {
 		}
 		insertIdx++
 	}
-
-	var NodeBuf []DataNode
-	var chldBuf []int32
+	var NodeBuf []DataNode = make([]DataNode, numCurrentKeys+1)
+	var chldBuf []int32 = make([]int32, numCurrentKeys+2)
 
 	copy(NodeBuf[:insertIdx], tp.Data[:insertIdx])
 	copy(chldBuf[:insertIdx+1], tp.Chld[:insertIdx+1])
 
-	NodeBuf = append(NodeBuf, DataNode{Key: key, Val: promtNode.Val})
-	chldBuf = append(chldBuf, chldAddr)
+	NodeBuf[insertIdx] = DataNode{Key: key, Val: promtNode.Val}
+	chldBuf[insertIdx+1] = chldAddr
 
 	copy(NodeBuf[insertIdx+1:], tp.Data[insertIdx:numCurrentKeys])
 	copy(chldBuf[insertIdx+2:], tp.Chld[insertIdx+1:numCurrentKeys+1])
 
-	fmt.Printf("NodeBuf:%+v\n", NodeBuf)
-	fmt.Printf("chldBuf:%+v\n", chldBuf)
 	if len(NodeBuf) <= MAX_KEYS {
 		tp.Data = [MAX_KEYS]DataNode{}
 		tp.Chld = [MAX_CHILDREN]int32{}
@@ -290,5 +285,39 @@ func (t tree) Update(key int32, val string) error {
 	return nil
 }
 func (t tree) SelectAll() error {
+	if t.table.SrtOff == t.table.EndOff {
+		return fmt.Errorf("Tree SelectAll Error: table is empty")
+	}
+	dsk, err := t.table.GetDiskData()
+	if err != nil {
+		return fmt.Errorf("Tree SelectAll Error:%w", err)
+	}
+	td := dsk.RecData.(TreePage)
+	if td.Head.IsLeaf {
+		for _, v := range td.Data {
+			if IsNodeEmpty(v) {
+				break
+			}
+			fmt.Printf("Key: %d, Value: %s\n", v.Key, v.Val)
+		}
+		return nil
+	}
+	for _, v := range td.Chld {
+		if v == -1 {
+			break
+		}
+		t.table.Cursor = v
+		err = t.SelectAll()
+		if err != nil {
+			return fmt.Errorf("Tree SelectAll Error:%w", err)
+		}
+	}
+	for _, v := range td.Data {
+		if IsNodeEmpty(v) {
+			break
+		}
+		fmt.Printf("Key: %d, Value: %s\n", v.Key, v.Val)
+	}
+
 	return nil
 }

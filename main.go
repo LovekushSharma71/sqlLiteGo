@@ -30,7 +30,7 @@ func main() {
 	fmt.Printf("err:%+v\n", t.Insert(5, "val5"))
 	fmt.Println(t.ResetCursor())
 	fmt.Printf("err:%+v\n", t.Insert(6, "val6"))
-	// fmt.Printf("err:%+v\n", t.SelectAll())
+	fmt.Printf("err:%+v\n", t.SelectAll())
 	// fmt.Printf("err:%+v\n", t.Update(1, "value1"))
 	// fmt.Printf("err:%+v\n", t.Update(2, "value2"))
 	// fmt.Printf("err:%+v\n", t.Update(3, "value3"))
