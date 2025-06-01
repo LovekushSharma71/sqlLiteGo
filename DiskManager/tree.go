@@ -302,7 +302,7 @@ func (t tree) SelectAll() error {
 		}
 		return nil
 	}
-	for _, v := range td.Chld {
+	for i, v := range td.Chld {
 		if v == -1 {
 			break
 		}
@@ -311,13 +311,13 @@ func (t tree) SelectAll() error {
 		if err != nil {
 			return fmt.Errorf("Tree SelectAll Error:%w", err)
 		}
-	}
-	for _, v := range td.Data {
-		if IsNodeEmpty(v) {
+		if i == MAX_CHILDREN-1 {
 			break
 		}
-		fmt.Printf("Key: %d, Value: %s\n", v.Key, v.Val)
+		if IsNodeEmpty(td.Data[i]) {
+			break
+		}
+		fmt.Printf("Key: %d, Value: %s\n", td.Data[i].Key, td.Data[i].Val)
 	}
-
 	return nil
 }
