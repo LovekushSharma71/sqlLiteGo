@@ -54,7 +54,7 @@ func (t *DiskManager) Insert(key int32, val string) error {
 			return fmt.Errorf("list: Insert error: %w", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("list: Insert error: %s", err)
+		return fmt.Errorf("list: Insert error: %w", err)
 	} else {
 		nodes := dskData.RecData.(ListPage).Data
 		var ind int = -1
@@ -86,13 +86,13 @@ func (t *DiskManager) Insert(key int32, val string) error {
 			})
 			listPage.Chld = dsk.RecHead.RecAddr
 			if err != nil {
-				return fmt.Errorf("ListInsert error: %s", err)
+				return fmt.Errorf("list: Insert error: %w", err)
 			}
 			fmt.Printf("List Node Inserted in disk:%+v", dsk)
 		}
 		err := t.EdtDiskData(listPage)
 		if err != nil {
-			return fmt.Errorf("ListInsert error: %s", err)
+			return fmt.Errorf("list: Insert error: %w", err)
 		}
 	}
 	return nil
@@ -104,7 +104,7 @@ func (t *DiskManager) Select(key int32) (string, error) {
 	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
-			return "", fmt.Errorf("ListSelect error: %s", err.Error())
+			return "", fmt.Errorf("list: Select error: %w", err)
 		}
 		lp := dsk.RecData.(ListPage)
 		for i := 0; i < MAX_KEYS; i++ {
@@ -123,14 +123,14 @@ func (t *DiskManager) Select(key int32) (string, error) {
 func (t *DiskManager) Update(key int32, val string) error {
 
 	if len(val) > 32 {
-		return fmt.Errorf("ListUpdate error: val size length is greater than 32")
+		return fmt.Errorf("list: Update error: val size length is greater than 32")
 	}
 
 	t.Cursor = t.SrtOff
 	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
-			return fmt.Errorf("ListUpdate error: %s", err.Error())
+			return fmt.Errorf("list: Update error: %w", err)
 		}
 		lp := dsk.RecData.(ListPage)
 		isUpdated := false
@@ -145,7 +145,7 @@ func (t *DiskManager) Update(key int32, val string) error {
 		if isUpdated {
 			err := t.EdtDiskData(lp)
 			if err != nil {
-				return fmt.Errorf("ListUpdate error: %s", err.Error())
+				return fmt.Errorf("list: Update error: %w", err)
 			}
 			return nil
 		}
@@ -155,7 +155,7 @@ func (t *DiskManager) Update(key int32, val string) error {
 		t.Cursor = lp.Chld
 
 	}
-	return fmt.Errorf("ListUpdate error: key not found")
+	return fmt.Errorf("list: Update error: key not found")
 }
 
 func (t *DiskManager) Delete(key int32) error {
@@ -164,7 +164,7 @@ func (t *DiskManager) Delete(key int32) error {
 	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
-			return fmt.Errorf("ListDelete error: %s", err.Error())
+			return fmt.Errorf("list: Delete error: %w", err)
 		}
 		lp := dsk.RecData.(ListPage)
 		isDeleted := false
@@ -184,24 +184,24 @@ func (t *DiskManager) Delete(key int32) error {
 					t.Cursor = parentAddr
 					dskP, err := t.GetDiskData()
 					if err != nil {
-						return fmt.Errorf("ListDelete error: %w", err)
+						return fmt.Errorf("list: Delete error: %w", err)
 					}
 					plp := dskP.RecData.(ListPage)
 					plp.Chld = childAddr
 					t.Cursor = parentAddr
 					err = t.EdtDiskData(plp)
 					if err != nil {
-						return fmt.Errorf("ListDelete error: %w", err)
+						return fmt.Errorf("list: Delete error: %w", err)
 					}
 				} else {
 					head, err := t.GetDBHeader()
 					if err != nil {
-						return fmt.Errorf("ListDelete error: %w", err)
+						return fmt.Errorf("list: Delete error: %w", err)
 					}
 					head.RootAddr = childAddr
 					err = t.WrtDBHeader(*head)
 					if err != nil {
-						return fmt.Errorf("ListDelete error: %w", err)
+						return fmt.Errorf("list: Delete error: %w", err)
 					}
 					t.SrtOff = childAddr
 				}
@@ -210,27 +210,27 @@ func (t *DiskManager) Delete(key int32) error {
 					t.Cursor = childAddr
 					dskC, err := t.GetDiskData()
 					if err != nil {
-						return fmt.Errorf("ListDelete error: %w", err)
+						return fmt.Errorf("list: Delete error: %w", err)
 					}
 					clp := dskC.RecData.(ListPage)
 					clp.Head.Parent = parentAddr
 					t.Cursor = childAddr
 					err = t.EdtDiskData(clp)
 					if err != nil {
-						return fmt.Errorf("ListDelete error: %w", err)
+						return fmt.Errorf("list: Delete error: %w", err)
 					}
 				}
 
 				t.Cursor = currentAddr
 				err = t.DelDiskData()
 				if err != nil {
-					return fmt.Errorf("ListDelete error: %w", err)
+					return fmt.Errorf("list: Delete error: %w", err)
 				}
 				return nil
 			}
 			err = t.EdtDiskData(lp)
 			if err != nil {
-				return fmt.Errorf("ListDelete error: %w", err)
+				return fmt.Errorf("list: Delete error: %w", err)
 			}
 			return nil
 		}
@@ -239,7 +239,7 @@ func (t *DiskManager) Delete(key int32) error {
 		}
 		t.Cursor = lp.Chld
 	}
-	return fmt.Errorf("ListDelete error: key not found")
+	return fmt.Errorf("list: Delete error: key not found")
 
 }
 
@@ -249,7 +249,7 @@ func (t *DiskManager) SelectAll() error {
 	for {
 		dsk, err := t.GetDiskData()
 		if err != nil {
-			return fmt.Errorf("ListSelect error: %s", err.Error())
+			return fmt.Errorf("list: Select error: %s", err.Error())
 		}
 		lp := dsk.RecData.(ListPage)
 		for i := 0; i < MAX_KEYS; i++ {

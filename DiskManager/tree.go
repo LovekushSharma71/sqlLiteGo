@@ -361,11 +361,11 @@ func (t tree) SelectAll() error {
 
 	// if table is empty
 	if t.table.SrtOff == t.table.EndOff {
-		return fmt.Errorf("TreeSelectAll Error: table is empty")
+		return fmt.Errorf("tree: SelectAll Error: table is empty")
 	}
 	dsk, err := t.table.GetDiskData()
 	if err != nil {
-		return fmt.Errorf("TreeSelectAll Error:%w", err)
+		return fmt.Errorf("tree: SelectAll Error:%w", err)
 	}
 	currentPage := dsk.RecData.(TreePage)
 	if currentPage.Head.IsLeaf {
