@@ -72,7 +72,7 @@ func (t tree) Insert(key int32, val string) error {
 	// if table is empty
 	if t.table.SrtOff == t.table.EndOff {
 		// if table is empty, create a new root node
-		t.table.WrtDiskData(TreePage{
+		root, err := t.table.WrtDiskData(TreePage{
 			Head: TreeHead{
 				IsLeaf: true,
 				IsRoot: true,
@@ -81,10 +81,18 @@ func (t tree) Insert(key int32, val string) error {
 			Data: [MAX_KEYS]DataNode{{Key: key, Val: String2ByteArr(val)}},
 			Chld: [MAX_CHILDREN]int32{},
 		})
-		t.table.WrtDBHeader(TableHeader{
-			RootAddr: t.table.SrtOff,
+		if err != nil {
+			return fmt.Errorf("tree: Insert (empty tree WrtDiskData): %w", err)
+		}
+		err = t.table.WrtDBHeader(TableHeader{
+			RootAddr: root.RecHead.RecAddr,
 			IsLinear: false,
 		})
+		if err != nil {
+			return fmt.Errorf("tree: Insert (empty tree WrtDiskData): %w", err)
+		}
+		t.table.SrtOff = root.RecHead.RecAddr
+		t.table.Cursor = root.RecHead.RecAddr // Set cursor to the new root
 		return nil
 
 	}
@@ -337,6 +345,7 @@ func (t tree) Insert(key int32, val string) error {
 		if err := t.updatePageParent(newRightInternalPageAddr, rewRoot.RecHead.RecAddr, false); err != nil { // Right child
 			return fmt.Errorf("TreeInsert (internal root split: update parent of right child %d): %w", newRightInternalPageAddr, err)
 		}
+		return nil
 	}
 
 	return &InsertKeyError{
@@ -350,12 +359,12 @@ func (t tree) Select(key int32) (string, error) {
 
 	// if table is empty
 	if t.table.SrtOff == t.table.EndOff {
-		return "", fmt.Errorf("tree: SelectAll Error: table is empty")
+		return "", fmt.Errorf("tree: Select Error: table is empty")
 	}
 	// if table is not empty, we need to select all from the tree
 	dsk, err := t.table.GetDiskData()
 	if err != nil {
-		return "", fmt.Errorf("tree: SelectAll Error:%w", err)
+		return "", fmt.Errorf("tree: Select Error:%w", err)
 	}
 	currentPage := dsk.RecData.(TreePage)
 	if currentPage.Head.IsLeaf {
@@ -369,43 +378,37 @@ func (t tree) Select(key int32) (string, error) {
 		}
 		return "", fmt.Errorf("tree: Select Error: key %d not found", key)
 	}
-	if currentPage.Data[0].Key > key {
-		if currentPage.Chld[0] == -1 {
-			return "", fmt.Errorf("tree: Select Error: key %d not found", key)
-		}
-		t.table.Cursor = currentPage.Chld[0]
-	} else if !IsNodeEmpty(currentPage.Data[MAX_KEYS-1]) && currentPage.Data[MAX_KEYS-1].Key < key {
-		if currentPage.Chld[MAX_CHILDREN-1] == -1 {
-			return "", fmt.Errorf("tree: Select Error: key %d not found", key)
-		}
-		t.table.Cursor = currentPage.Chld[MAX_CHILDREN-1]
-	} else if currentPage.Data[0].Key == key {
-		return ByteArr2String(currentPage.Data[0].Val), nil
-	} else if currentPage.Data[MAX_KEYS-1].Key == key {
-		return ByteArr2String(currentPage.Data[MAX_KEYS-1].Val), nil
-	} else {
-
-		for i := 1; i < MAX_KEYS; i++ {
-			if IsNodeEmpty(currentPage.Data[i]) {
+	for i := 0; i < MAX_KEYS; i++ {
+		if IsNodeEmpty(currentPage.Data[i]) {
+			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
 				return "", fmt.Errorf("tree: Select Error: key %d not found", key)
 			}
-			if currentPage.Data[i].Key > key && currentPage.Data[i-1].Key < key {
-				if currentPage.Chld[i] == -1 {
-					return "", fmt.Errorf("tree: Select Error: key %d not found", key)
-				}
-				t.table.Cursor = currentPage.Chld[i]
-				break
+			t.table.Cursor = currentPage.Chld[i]
+			return t.Select(key)
+		}
+		if currentPage.Data[i].Key == key {
+			return ByteArr2String(currentPage.Data[i].Val), nil
+		}
+		if currentPage.Data[i].Key > key {
+			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+				return "", fmt.Errorf("tree: Select Error: key %d not found", key)
 			}
-			if currentPage.Data[i].Key == key {
-				return ByteArr2String(currentPage.Data[i].Val), nil
-			}
+			t.table.Cursor = currentPage.Chld[i]
+			return t.Select(key)
 		}
 	}
-	val, err := t.Select(key)
-	if err != nil {
-		return "", fmt.Errorf("tree: Select Error:%w", err)
+	numValidKeysInNode := 0
+	for _, v_key := range currentPage.Data {
+		if IsNodeEmpty(v_key) {
+			break
+		}
+		numValidKeysInNode++
 	}
-	return val, nil
+	if currentPage.Chld[numValidKeysInNode] == 0 || currentPage.Chld[numValidKeysInNode] == -1 {
+		return "", fmt.Errorf("tree: Select Error: key %d not found (no rightmost child path)", key)
+	}
+	t.table.Cursor = currentPage.Chld[numValidKeysInNode]
+	return t.Select(key)
 }
 
 func (t tree) Delete(key int32) error {
@@ -413,7 +416,73 @@ func (t tree) Delete(key int32) error {
 }
 
 func (t tree) Update(key int32, val string) error {
-	return nil
+
+	if len(val) > 32 {
+		return fmt.Errorf("tree: Update Error: val size length is greater than 32")
+	}
+	// if table is empty
+	if t.table.SrtOff == t.table.EndOff {
+		return fmt.Errorf("tree: Update Error: table is empty")
+	}
+	buf := String2ByteArr(val)
+	// if table is not empty, we need to select all from the tree
+	dsk, err := t.table.GetDiskData()
+	if err != nil {
+		return fmt.Errorf("tree: Update Error:%w", err)
+	}
+	currentPage := dsk.RecData.(TreePage)
+	if currentPage.Head.IsLeaf {
+		for i, v := range currentPage.Data {
+			if IsNodeEmpty(v) {
+				break
+			}
+			if v.Key == key {
+				currentPage.Data[i].Val = buf
+				err = t.table.EdtDiskData(currentPage)
+				if err != nil {
+					return fmt.Errorf("tree: Update Error:%w", err)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("tree: Update Error: key %d not found", key)
+	}
+	for i := 0; i < MAX_KEYS; i++ {
+		if IsNodeEmpty(currentPage.Data[i]) {
+			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+				return fmt.Errorf("tree: Update Error: key %d not found", key)
+			}
+			t.table.Cursor = currentPage.Chld[i]
+			return t.Update(key, val)
+		}
+		if currentPage.Data[i].Key == key {
+			currentPage.Data[i].Val = buf
+			err = t.table.EdtDiskData(currentPage)
+			if err != nil {
+				return fmt.Errorf("tree: Update Error:%w", err)
+			}
+			return nil
+		}
+		if currentPage.Data[i].Key > key {
+			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+				return fmt.Errorf("tree: Select Error: key %d not found", key)
+			}
+			t.table.Cursor = currentPage.Chld[i]
+			return t.Update(key, val)
+		}
+	}
+	numValidKeysInNode := 0
+	for _, v_key := range currentPage.Data {
+		if IsNodeEmpty(v_key) {
+			break
+		}
+		numValidKeysInNode++
+	}
+	if currentPage.Chld[numValidKeysInNode] == 0 || currentPage.Chld[numValidKeysInNode] == -1 {
+		return fmt.Errorf("tree: Update Error: key %d not found (no rightmost child path)", key)
+	}
+	t.table.Cursor = currentPage.Chld[numValidKeysInNode]
+	return t.Update(key, val)
 }
 
 func (t tree) SelectAll() error {
@@ -438,13 +507,13 @@ func (t tree) SelectAll() error {
 		return nil
 	}
 	for idx, chld := range currentPage.Chld {
-		if chld == -1 {
+		if chld == -1 || chld == 0 {
 			break
 		}
 		t.table.Cursor = chld
 		err = t.SelectAll()
 		if err != nil {
-			return fmt.Errorf("TreeSelectAll Error:%w", err)
+			return fmt.Errorf("tree: SelectAll Error:%w", err)
 		}
 		if idx == MAX_CHILDREN-1 {
 			break
