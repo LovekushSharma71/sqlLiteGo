@@ -358,6 +358,8 @@ func (t tree) Update(key int32, val string) error {
 	return nil
 }
 func (t tree) SelectAll() error {
+
+	// if table is empty
 	if t.table.SrtOff == t.table.EndOff {
 		return fmt.Errorf("TreeSelectAll Error: table is empty")
 	}
@@ -365,9 +367,9 @@ func (t tree) SelectAll() error {
 	if err != nil {
 		return fmt.Errorf("TreeSelectAll Error:%w", err)
 	}
-	td := dsk.RecData.(TreePage)
-	if td.Head.IsLeaf {
-		for _, v := range td.Data {
+	currentPage := dsk.RecData.(TreePage)
+	if currentPage.Head.IsLeaf {
+		for _, v := range currentPage.Data {
 			if IsNodeEmpty(v) {
 				break
 			}
@@ -375,22 +377,22 @@ func (t tree) SelectAll() error {
 		}
 		return nil
 	}
-	for i, v := range td.Chld {
-		if v == -1 {
+	for idx, chld := range currentPage.Chld {
+		if chld == -1 {
 			break
 		}
-		t.table.Cursor = v
+		t.table.Cursor = chld
 		err = t.SelectAll()
 		if err != nil {
 			return fmt.Errorf("TreeSelectAll Error:%w", err)
 		}
-		if i == MAX_CHILDREN-1 {
+		if idx == MAX_CHILDREN-1 {
 			break
 		}
-		if IsNodeEmpty(td.Data[i]) {
+		if IsNodeEmpty(currentPage.Data[idx]) {
 			break
 		}
-		fmt.Printf("Key: %d, Value: %s\n", td.Data[i].Key, td.Data[i].Val)
+		fmt.Printf("Key: %d, Value: %s\n", currentPage.Data[idx].Key, currentPage.Data[idx].Val)
 	}
 	return nil
 }

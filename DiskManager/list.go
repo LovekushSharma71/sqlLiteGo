@@ -10,7 +10,7 @@ import (
 func (t *DiskManager) ResetCursor() error {
 	hdr, err := t.GetDBHeader()
 	if err != nil {
-		return fmt.Errorf("List ResetCursor Error:%w", err)
+		return fmt.Errorf("list: ResetCursor Error:%w", err)
 	}
 
 	t.Cursor = hdr.RootAddr
@@ -21,7 +21,7 @@ func (t *DiskManager) ResetCursor() error {
 func (t *DiskManager) Insert(key int32, val string) error {
 
 	if len(val) > 32 {
-		return fmt.Errorf("ListInsert error: val size length is greater than 32")
+		return fmt.Errorf("list: Insert error: val size length is greater than 32")
 	}
 
 	buf := String2ByteArr(val)
@@ -32,7 +32,7 @@ func (t *DiskManager) Insert(key int32, val string) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("ListInsert error: %w", err)
+			return fmt.Errorf("list: Insert error: %w", err)
 		}
 		lp := dsk.RecData.(ListPage)
 		if lp.Chld == -1 {
@@ -51,10 +51,10 @@ func (t *DiskManager) Insert(key int32, val string) error {
 			Chld: -1,
 		})
 		if err != nil {
-			return fmt.Errorf("ListInsert error: %w", err)
+			return fmt.Errorf("list: Insert error: %w", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("ListInsert error: %s", err)
+		return fmt.Errorf("list: Insert error: %s", err)
 	} else {
 		nodes := dskData.RecData.(ListPage).Data
 		var ind int = -1
