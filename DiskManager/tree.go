@@ -348,21 +348,81 @@ func (t tree) Insert(key int32, val string) error {
 
 func (t tree) Select(key int32) (string, error) {
 
-	return "", nil
+	// if table is empty
+	if t.table.SrtOff == t.table.EndOff {
+		return "", fmt.Errorf("tree: SelectAll Error: table is empty")
+	}
+	// if table is not empty, we need to select all from the tree
+	dsk, err := t.table.GetDiskData()
+	if err != nil {
+		return "", fmt.Errorf("tree: SelectAll Error:%w", err)
+	}
+	currentPage := dsk.RecData.(TreePage)
+	if currentPage.Head.IsLeaf {
+		for _, v := range currentPage.Data {
+			if IsNodeEmpty(v) {
+				break
+			}
+			if v.Key == key {
+				return ByteArr2String(v.Val), nil
+			}
+		}
+		return "", fmt.Errorf("tree: Select Error: key %d not found", key)
+	}
+	if currentPage.Data[0].Key > key {
+		if currentPage.Chld[0] == -1 {
+			return "", fmt.Errorf("tree: Select Error: key %d not found", key)
+		}
+		t.table.Cursor = currentPage.Chld[0]
+	} else if !IsNodeEmpty(currentPage.Data[MAX_KEYS-1]) && currentPage.Data[MAX_KEYS-1].Key < key {
+		if currentPage.Chld[MAX_CHILDREN-1] == -1 {
+			return "", fmt.Errorf("tree: Select Error: key %d not found", key)
+		}
+		t.table.Cursor = currentPage.Chld[MAX_CHILDREN-1]
+	} else if currentPage.Data[0].Key == key {
+		return ByteArr2String(currentPage.Data[0].Val), nil
+	} else if currentPage.Data[MAX_KEYS-1].Key == key {
+		return ByteArr2String(currentPage.Data[MAX_KEYS-1].Val), nil
+	} else {
+
+		for i := 1; i < MAX_KEYS; i++ {
+			if IsNodeEmpty(currentPage.Data[i]) {
+				return "", fmt.Errorf("tree: Select Error: key %d not found", key)
+			}
+			if currentPage.Data[i].Key > key && currentPage.Data[i-1].Key < key {
+				if currentPage.Chld[i] == -1 {
+					return "", fmt.Errorf("tree: Select Error: key %d not found", key)
+				}
+				t.table.Cursor = currentPage.Chld[i]
+				break
+			}
+			if currentPage.Data[i].Key == key {
+				return ByteArr2String(currentPage.Data[i].Val), nil
+			}
+		}
+	}
+	val, err := t.Select(key)
+	if err != nil {
+		return "", fmt.Errorf("tree: Select Error:%w", err)
+	}
+	return val, nil
 }
 
 func (t tree) Delete(key int32) error {
 	return nil
 }
+
 func (t tree) Update(key int32, val string) error {
 	return nil
 }
+
 func (t tree) SelectAll() error {
 
 	// if table is empty
 	if t.table.SrtOff == t.table.EndOff {
 		return fmt.Errorf("tree: SelectAll Error: table is empty")
 	}
+	// if table is not empty, we need to select all from the tree
 	dsk, err := t.table.GetDiskData()
 	if err != nil {
 		return fmt.Errorf("tree: SelectAll Error:%w", err)

@@ -44,6 +44,10 @@ func String2ByteArr(str string) [32]byte {
 	return buf
 }
 
+func ByteArr2String(buf [32]byte) string {
+	return string(bytes.Trim(buf[:], "\x00"))
+}
+
 func SerializeDiskData(data *DiskData) ([]byte, error) {
 
 	if data == nil {
