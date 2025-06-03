@@ -32,16 +32,44 @@ func (t tree) ResetCursor() error {
 
 	hdr, err := t.table.GetDBHeader()
 	if err != nil {
-		return fmt.Errorf("Tree ResetCursor Error:%w", err)
+		return fmt.Errorf("tree: ResetCursor error:%w", err)
 	}
 	t.table.Cursor = hdr.RootAddr
 	t.table.SrtOff = hdr.RootAddr
 	return nil
 }
 
-// rewrite insert
+func (t tree) updatePageParent(pageAddr int32, parentAddr int32, isRoot bool) error {
+
+	if pageAddr == 0 || pageAddr == -1 {
+		return fmt.Errorf("tree: updatePageParent: invalid pageAddr %d", pageAddr)
+	}
+	savedCursor := t.table.Cursor
+	t.table.Cursor = pageAddr
+	dskData, err := t.table.GetDiskData()
+	if err != nil {
+		t.table.Cursor = savedCursor
+		return fmt.Errorf("tree: updatePageParent (get page %d): %w", pageAddr, err)
+	}
+	var pageToUpdate TreePage // Assuming all pages in the tree are TreePage
+	if dskData.RecHead.RecType != DT_TREE_PAGE {
+		t.table.Cursor = savedCursor
+		return fmt.Errorf("tree: updatePageParent: page %d is not a TreePage, type %T", pageAddr, dskData.RecData)
+	}
+	pageToUpdate = dskData.RecData.(TreePage)
+	pageToUpdate.Head.Parent = parentAddr
+	pageToUpdate.Head.IsRoot = isRoot // Update IsRoot status as well
+	err = t.table.EdtDiskData(pageToUpdate)
+	t.table.Cursor = savedCursor
+	if err != nil {
+		return fmt.Errorf("tree: updatePageParent (edit page %d): %w", pageAddr, err)
+	}
+	return nil
+}
+
 func (t tree) Insert(key int32, val string) error {
 
+	// if table is empty
 	if t.table.SrtOff == t.table.EndOff {
 		// if table is empty, create a new root node
 		t.table.WrtDiskData(TreePage{
@@ -60,73 +88,77 @@ func (t tree) Insert(key int32, val string) error {
 		return nil
 
 	}
+
+	// if table is not empty, we need to insert into the tree
 	dsk, err := t.table.GetDiskData()
 	if err != nil {
-		return fmt.Errorf("TreeInsert Error:%w", err)
+		return fmt.Errorf("tree: Insert Error:%w", err)
 	}
-	tp := dsk.RecData.(TreePage)
-	if tp.Head.IsLeaf {
-		// if the current page is a leaf, we can insert directly
-		var NodeBuf []DataNode
-		isInserted := false
-		for _, v := range tp.Data {
+	currentPage := dsk.RecData.(TreePage)
+	currentPageAddr := dsk.RecHead.RecAddr
+
+	// if the current page is a leaf, we can insert directly
+	if currentPage.Head.IsLeaf {
+
+		var insertIdx, numCurrentKeys = 0, 0
+		for _, v := range currentPage.Data {
 			if IsNodeEmpty(v) {
 				break
 			}
-			if v.Key > key {
-				isInserted = true
-				NodeBuf = append(NodeBuf, DataNode{
-					Key: key,
-					Val: String2ByteArr(val),
-				})
-
+			if v.Key < key {
+				insertIdx++
 			}
-			NodeBuf = append(NodeBuf, v)
+			numCurrentKeys++
 		}
-		if !isInserted {
-			NodeBuf = append(NodeBuf, DataNode{
-				Key: key,
-				Val: String2ByteArr(val),
-			})
+
+		var NodeBuf []DataNode = make([]DataNode, numCurrentKeys+1)
+
+		copy(NodeBuf, currentPage.Data[:insertIdx])
+		NodeBuf[insertIdx] = DataNode{
+			Key: key,
+			Val: String2ByteArr(val),
 		}
-		tp.Data = [MAX_KEYS]DataNode{}
+		copy(NodeBuf[insertIdx+1:], currentPage.Data[insertIdx:numCurrentKeys])
+
+		// if the current page is not full, we can just copy the existing leaf page children
+		currentPage.Data = [MAX_KEYS]DataNode{}
 		if len(NodeBuf) <= MAX_KEYS {
 
-			copy(tp.Data[:], NodeBuf)
-			err = t.table.EdtDiskData(tp)
+			copy(currentPage.Data[:], NodeBuf)
+			err = t.table.EdtDiskData(currentPage)
 			if err != nil {
-				return fmt.Errorf("TreeInsert Error:%w", err)
+				return fmt.Errorf("tree: Insert Error:%w", err)
 			}
 			return nil
 
 		}
+
 		// if the current page is full, we need to split it
-		var tmpPge1, tmpPge2 TreePage
+		var leftPge, rightPge TreePage
 
-		copy(tmpPge1.Data[:], NodeBuf[:len(NodeBuf)/2])
-		tmpPge1.Head = tp.Head
-		tmpPge1.Head.IsRoot = false
+		copy(leftPge.Data[:], NodeBuf[:len(NodeBuf)/2])
+		leftPge.Head = currentPage.Head
+		leftPge.Head.IsRoot = false
 		// page has no children, so we can just copy the existing leaf page children
-		tmpPge1.Chld = tp.Chld
+		leftPge.Chld = currentPage.Chld
 
-		copy(tmpPge2.Data[:], NodeBuf[len(NodeBuf)/2+1:])
-		tmpPge2.Head = tp.Head
-		tmpPge2.Head.IsRoot = false
+		copy(rightPge.Data[:], NodeBuf[len(NodeBuf)/2+1:])
+		rightPge.Head = currentPage.Head
+		rightPge.Head.IsRoot = false
 		// page has no children, so we can just copy the existing leaf page children
-		tmpPge2.Chld = tp.Chld
+		rightPge.Chld = currentPage.Chld
 
-		tmpCursor := t.table.Cursor
-		t.table.Cursor = dsk.RecHead.RecAddr
-		err = t.table.EdtDiskData(tmpPge1)
+		err = t.table.EdtDiskData(leftPge)
 		if err != nil {
-			return fmt.Errorf("TreeInsert Error:%w", err)
+			return fmt.Errorf("tree: Insert Error:%w", err)
 		}
-		nd, err := t.table.WrtDiskData(tmpPge2)
+		nd, err := t.table.WrtDiskData(rightPge)
 		if err != nil {
-			return fmt.Errorf("TreeInsert Error:%w", err)
+			return fmt.Errorf("tree: Insert Error:%w", err)
 		}
-		t.table.Cursor = tmpCursor
-		if tp.Head.IsRoot {
+		rightPgeAddr := nd.RecHead.RecAddr // Address of the right page, to update parent later
+
+		if currentPage.Head.IsRoot {
 			root, err := t.table.WrtDiskData(TreePage{
 				Head: TreeHead{
 					IsLeaf: false,
@@ -137,63 +169,72 @@ func (t tree) Insert(key int32, val string) error {
 				Chld: [MAX_CHILDREN]int32{dsk.RecHead.RecAddr, nd.RecHead.RecAddr},
 			})
 			if err != nil {
-				return fmt.Errorf("TreeInsert Error:%w", err)
+				return fmt.Errorf("tree: Insert Error:%w", err)
 			}
 			t.table.WrtDBHeader(TableHeader{
 				RootAddr: root.RecHead.RecAddr,
 				IsLinear: false,
 			})
 			t.table.SrtOff = root.RecHead.RecAddr
-			// update parent children later
+			t.table.Cursor = root.RecHead.RecAddr // Set cursor to the new root
+			// Update parent pointers of the two new children
+			if err := t.updatePageParent(currentPageAddr, root.RecHead.RecAddr, false); err != nil { // Left child
+				return fmt.Errorf("TreeInsert (leaf root split: update parent of left child %d): %w", currentPageAddr, err)
+			}
+			if err := t.updatePageParent(rightPgeAddr, root.RecHead.RecAddr, false); err != nil { // Right child
+				return fmt.Errorf("TreeInsert (leaf root split: update parent of right child %d): %w", rightPgeAddr, err)
+			}
 			return nil
 		}
 		return &InsertKeyError{
 			PromotedNode: NodeBuf[len(NodeBuf)/2],
-			NewChildNode: nd.RecHead.RecAddr,
+			NewChildNode: rightPgeAddr,
 			Err:          nil,
 		}
 	}
-	// if the current page is not a leaf, we need to find the correct child node to insert into
-	// find the child node to insert into
-
-	var promtNode DataNode
-	var chldAddr int32 = -1
-	tmpCursor := t.table.Cursor
-	found := false
+	// internal node case, we need to find the child node to insert into
+	savedCursor := t.table.Cursor
+	foundChild := false
 	numValidKeys := 0
-	for i, v := range tp.Data {
+	for i, v := range currentPage.Data {
 		if IsNodeEmpty(v) {
 			break
 		}
 		if v.Key > key {
-			found = true
-			t.table.Cursor = tp.Chld[i]
+			foundChild = true
+			t.table.Cursor = currentPage.Chld[i]
 			break
 		}
 		numValidKeys++
 	}
-	if !found {
-		t.table.Cursor = tp.Chld[numValidKeys]
+	if !foundChild {
+		t.table.Cursor = currentPage.Chld[numValidKeys]
 	}
+
+	// Recursive call to Insert
 	err = t.Insert(key, val)
-	t.table.Cursor = tmpCursor
+	t.table.Cursor = savedCursor
+
+	var promotedNodeFromChild DataNode
+	var newChildAddrFromPromotion int32
 	if errors.As(err, new(*InsertKeyError)) {
-		promtNode, chldAddr = err.(*InsertKeyError).PromotedNode, err.(*InsertKeyError).NewChildNode
-		key = promtNode.Key
+		promotedNodeFromChild, newChildAddrFromPromotion = err.(*InsertKeyError).PromotedNode, err.(*InsertKeyError).NewChildNode
+		key = promotedNodeFromChild.Key
 	} else if err != nil {
-		return fmt.Errorf("TreeInsert Error:%w", err)
+		return fmt.Errorf("tree: Insert Error:%w", err)
 	} else {
 		return nil
 	}
 
+	// Insert promoted key and new child pointer into THIS internal node (tp)
 	insertIdx := 0
 	numCurrentKeys := 0
-	for _, kv := range tp.Data {
-		if IsNodeEmpty(kv) {
+	for _, v := range currentPage.Data {
+		if IsNodeEmpty(v) {
 			break
 		}
 		numCurrentKeys++
-		if key < kv.Key {
+		if key < v.Key {
 			break
 		}
 		insertIdx++
@@ -201,78 +242,110 @@ func (t tree) Insert(key int32, val string) error {
 	var NodeBuf []DataNode = make([]DataNode, numCurrentKeys+1)
 	var chldBuf []int32 = make([]int32, numCurrentKeys+2)
 
-	copy(NodeBuf[:insertIdx], tp.Data[:insertIdx])
-	copy(chldBuf[:insertIdx+1], tp.Chld[:insertIdx+1])
+	copy(NodeBuf[:insertIdx], currentPage.Data[:insertIdx])
+	copy(chldBuf[:insertIdx+1], currentPage.Chld[:insertIdx+1])
 
-	NodeBuf[insertIdx] = DataNode{Key: key, Val: promtNode.Val}
-	chldBuf[insertIdx+1] = chldAddr
+	NodeBuf[insertIdx] = DataNode{Key: key, Val: promotedNodeFromChild.Val}
+	chldBuf[insertIdx+1] = newChildAddrFromPromotion
 
-	copy(NodeBuf[insertIdx+1:], tp.Data[insertIdx:numCurrentKeys])
-	copy(chldBuf[insertIdx+2:], tp.Chld[insertIdx+1:numCurrentKeys+1])
+	copy(NodeBuf[insertIdx+1:], currentPage.Data[insertIdx:numCurrentKeys])
+	copy(chldBuf[insertIdx+2:], currentPage.Chld[insertIdx+1:numCurrentKeys+1])
 
 	if len(NodeBuf) <= MAX_KEYS {
-		tp.Data = [MAX_KEYS]DataNode{}
-		tp.Chld = [MAX_CHILDREN]int32{}
-		copy(tp.Data[:], NodeBuf)
-		copy(tp.Chld[:], chldBuf)
-		err = t.table.EdtDiskData(tp)
+
+		currentPage.Data = [MAX_KEYS]DataNode{}
+		currentPage.Chld = [MAX_CHILDREN]int32{}
+		copy(currentPage.Data[:], NodeBuf)
+		copy(currentPage.Chld[:], chldBuf)
+		if newChildAddrFromPromotion != 0 && newChildAddrFromPromotion != -1 {
+			if err := t.updatePageParent(newChildAddrFromPromotion, currentPageAddr, false); err != nil {
+				return fmt.Errorf("TreeInsert (internal no-split: update parent of new child %d): %w", newChildAddrFromPromotion, err)
+			}
+		}
+		err = t.table.EdtDiskData(currentPage)
 		if err != nil {
-			return fmt.Errorf("TreeInsert Error:%w", err)
+			return fmt.Errorf("tree: Insert Error:%w", err)
 		}
 		return nil
 	}
-	// if the current page is full, we need to split it
-	var tmpPge1, tmpPge2 TreePage
 
-	copy(tmpPge1.Data[:], NodeBuf[:len(NodeBuf)/2])
-	tmpPge1.Head = tp.Head
-	tmpPge1.Head.IsRoot = false
-	copy(tmpPge1.Chld[:], chldBuf[:len(chldBuf)/2])
+	// internal node is full, we need to split it
+	medianIdx := len(NodeBuf) / 2
+	promotedNodeFromInternal := NodeBuf[medianIdx]
 
-	copy(tmpPge2.Data[:], NodeBuf[len(NodeBuf)/2+1:])
-	tmpPge2.Head = tp.Head
-	tmpPge2.Head.IsRoot = false
-	copy(tmpPge2.Chld[:], chldBuf[len(chldBuf)/2+1:])
+	leftIntenalPage := TreePage{Head: currentPage.Head}
+	leftIntenalPage.Head.IsRoot = false // No longer root after split
+	copy(leftIntenalPage.Data[:], NodeBuf[:medianIdx])
+	copy(leftIntenalPage.Chld[:], chldBuf[:medianIdx+1]) // Children for left page
 
-	tmpCursor = t.table.Cursor
-	t.table.Cursor = dsk.RecHead.RecAddr
-	err = t.table.EdtDiskData(tmpPge1)
+	rightInternalPage := TreePage{Head: currentPage.Head}
+	rightInternalPage.Head.IsRoot = false
+	copy(rightInternalPage.Data[:], NodeBuf[medianIdx+1:])
+	copy(rightInternalPage.Chld[:], chldBuf[medianIdx+1:]) // Children for right page
+
+	err = t.table.EdtDiskData(leftIntenalPage)
 	if err != nil {
-		return fmt.Errorf("TreeInsert Error:%w", err)
+		return fmt.Errorf("tree: Insert Error:%w", err)
 	}
-	nd, err := t.table.WrtDiskData(tmpPge2)
+	newRightInternalPage, err := t.table.WrtDiskData(rightInternalPage)
 	if err != nil {
-		return fmt.Errorf("TreeInsert Error:%w", err)
+		return fmt.Errorf("tree: Insert Error:%w", err)
 	}
-	t.table.Cursor = tmpCursor
-	if tp.Head.IsRoot {
-		// if the current page is a root, we need to create a new root node
-		root, err := t.table.WrtDiskData(TreePage{
+	newRightInternalPageAddr := newRightInternalPage.RecHead.RecAddr // Address of the right page, to update parent later
+
+	// Update parent pointers of children adopted by the new rightIntenalPage
+	for _, childAddrMoved := range rightInternalPage.Chld { // Iterate only over children actually in rightInternalPage
+		if childAddrMoved == 0 || childAddrMoved == -1 {
+			continue
+		}
+		// Check if this child was indeed part of the moved set, to avoid re-parenting already correct ones
+		// This check is implicitly handled if rightInternalPage.Chld only contains those that moved.
+		if err := t.updatePageParent(childAddrMoved, newRightInternalPageAddr, false); err != nil {
+			return fmt.Errorf("TreeInsert (internal split: update parent of child %d to new right page %d): %w", childAddrMoved, newRightInternalPageAddr, err)
+		}
+	}
+
+	// If the split internal node was the ROOT
+	if currentPage.Head.IsRoot {
+
+		rewRoot, err := t.table.WrtDiskData(TreePage{
 			Head: TreeHead{
-				IsLeaf: true,
+				IsLeaf: false, // Root of internal nodes is not a leaf
 				IsRoot: true,
 				Parent: -1,
 			},
-			Data: [MAX_KEYS]DataNode{{Key: NodeBuf[len(NodeBuf)/2].Key, Val: NodeBuf[len(NodeBuf)/2].Val}},
-			Chld: [MAX_CHILDREN]int32{dsk.RecHead.RecAddr, nd.RecHead.RecAddr},
+			Data: [MAX_KEYS]DataNode{promotedNodeFromInternal},
+			Chld: [MAX_CHILDREN]int32{currentPageAddr, newRightInternalPageAddr},
 		})
 		if err != nil {
-			return fmt.Errorf("TreeInsert Error:%w", err)
+			return fmt.Errorf("tree: Insert Error:%w", err)
 		}
-		t.table.WrtDBHeader(TableHeader{
-			RootAddr: root.RecHead.RecAddr,
+		err = t.table.WrtDBHeader(TableHeader{
+			RootAddr: rewRoot.RecHead.RecAddr,
 			IsLinear: false,
 		})
-		t.table.SrtOff = root.RecHead.RecAddr
-		return nil
+		if err != nil {
+			return fmt.Errorf("tree: Insert Error:%w", err)
+		}
+		t.table.SrtOff = rewRoot.RecHead.RecAddr
+		t.table.Cursor = rewRoot.RecHead.RecAddr // Set cursor to the new root
 
+		// Update parent pointers of the two new children (split internal nodes)
+		if err := t.updatePageParent(currentPageAddr, rewRoot.RecHead.RecAddr, false); err != nil { // Left child
+			return fmt.Errorf("TreeInsert (internal root split: update parent of left child %d): %w", currentPageAddr, err)
+		}
+		if err := t.updatePageParent(newRightInternalPageAddr, rewRoot.RecHead.RecAddr, false); err != nil { // Right child
+			return fmt.Errorf("TreeInsert (internal root split: update parent of right child %d): %w", newRightInternalPageAddr, err)
+		}
 	}
+
 	return &InsertKeyError{
-		PromotedNode: NodeBuf[len(NodeBuf)/2],
-		NewChildNode: nd.RecHead.RecAddr,
+		PromotedNode: promotedNodeFromInternal,
+		NewChildNode: newRightInternalPageAddr,
 		Err:          nil,
 	}
 }
+
 func (t tree) Select(key int32) (string, error) {
 
 	return "", nil
@@ -286,11 +359,11 @@ func (t tree) Update(key int32, val string) error {
 }
 func (t tree) SelectAll() error {
 	if t.table.SrtOff == t.table.EndOff {
-		return fmt.Errorf("Tree SelectAll Error: table is empty")
+		return fmt.Errorf("TreeSelectAll Error: table is empty")
 	}
 	dsk, err := t.table.GetDiskData()
 	if err != nil {
-		return fmt.Errorf("Tree SelectAll Error:%w", err)
+		return fmt.Errorf("TreeSelectAll Error:%w", err)
 	}
 	td := dsk.RecData.(TreePage)
 	if td.Head.IsLeaf {
@@ -309,7 +382,7 @@ func (t tree) SelectAll() error {
 		t.table.Cursor = v
 		err = t.SelectAll()
 		if err != nil {
-			return fmt.Errorf("Tree SelectAll Error:%w", err)
+			return fmt.Errorf("TreeSelectAll Error:%w", err)
 		}
 		if i == MAX_CHILDREN-1 {
 			break
