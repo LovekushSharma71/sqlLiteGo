@@ -19,7 +19,7 @@ func main() {
 	// }
 
 	// Insert values in a loop
-	for i := 1; i <= 50; i++ {
+	for i := 1; i <= 7; i++ {
 		fmt.Println(t.ResetCursor())
 		fmt.Printf("err:%+v\n", t.Insert(int32(i), fmt.Sprintf("val%d", i)))
 	}
@@ -29,17 +29,16 @@ func main() {
 	fmt.Printf("err:%+v\n", t.SelectAll())
 
 	// Updating values (if needed, uncomment)
-	for i := 1; i <= 16; i++ {
+	for i := 1; i <= 7; i++ {
 		fmt.Println(t.ResetCursor())
 		fmt.Printf("err:%+v\n", t.Update(int32(i), fmt.Sprintf("value%d", i)))
 	}
 
 	// Selecting individual values in a loop
-	for i := 1; i <= 50; i++ {
+	for i := 1; i <= 7; i++ {
 		fmt.Println(t.ResetCursor())
 		fmt.Println(t.Select(int32(i)))
 	}
-	// fmt.Println(t.ResetCursor())
 	// fmt.Printf("err:%+v\n", t.Insert(1, "val1"))
 	// fmt.Println(t.ResetCursor())
 	// fmt.Printf("err:%+v\n", t.Insert(2, "val2"))

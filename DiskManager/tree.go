@@ -412,6 +412,76 @@ func (t tree) Select(key int32) (string, error) {
 }
 
 func (t tree) Delete(key int32) error {
+
+	// if table is empty
+	if t.table.SrtOff == t.table.EndOff {
+		return fmt.Errorf("tree: Delete Error: table is empty")
+	}
+	// if table is not empty, we need to select all from the tree
+	dsk, err := t.table.GetDiskData()
+	if err != nil {
+		return fmt.Errorf("tree: Delete Error:%w", err)
+	}
+	currentPage := dsk.RecData.(TreePage)
+	if currentPage.Head.IsLeaf {
+
+		var delIdx, numCurrentKeys = -1, 0
+		for _, v := range currentPage.Data {
+			if IsNodeEmpty(v) {
+				break
+			}
+			if v.Key == key {
+				delIdx = numCurrentKeys
+			}
+			numCurrentKeys++
+		}
+		if delIdx == -1 {
+			return fmt.Errorf("tree: Delete Error: key %d not found", key)
+		}
+
+		NodeBuf := make([]DataNode, numCurrentKeys-1)
+		copy(NodeBuf, currentPage.Data[:delIdx])
+		copy(NodeBuf[delIdx:], currentPage.Data[delIdx+1:numCurrentKeys])
+
+		//if current page is root and , we can just delete the root
+		if currentPage.Head.IsRoot && len(NodeBuf) == 0 {
+			// if current page is root and has no keys, we can just delete the root
+			err = t.table.DelDiskData()
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			hdr, err := t.table.GetDBHeader()
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			hdr.RootAddr = -1 // Set root to -1
+			err = t.table.WrtDBHeader(*hdr)
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			t.table.SrtOff = -1 // Set start offset to -1
+			t.table.Cursor = -1 // Set cursor to -1
+			return nil
+		}
+		// if current page is greater than MIN_KEYS, we can just copy the existing leaf page children
+		if len(NodeBuf) <= MIN_KEYS || currentPage.Head.IsRoot {
+
+			currentPage.Data = [MAX_KEYS]DataNode{}
+			copy(currentPage.Data[:], NodeBuf)
+			err = t.table.EdtDiskData(currentPage)
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			return nil
+		}
+
+		// if current page is less than MIN_KEYS and not root, we need to merge with a sibling or borrow from a sibling
+		// Borrowing logic is not implemented in this example, but you can implement it as needed.
+		// Merging logic is not implemented in this example, but you can implement it as needed.
+		return fmt.Errorf("tree: Delete Error: current page has less than MIN_KEYS and is not root, merging or borrowing logic not implemented")
+	}
+	// internal node case
+
 	return nil
 }
 
