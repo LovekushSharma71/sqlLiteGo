@@ -411,6 +411,27 @@ func (t tree) Select(key int32) (string, error) {
 	return t.Select(key)
 }
 
+type DeleteKeyError struct {
+	DemotedNode  DataNode
+	NewChildNode int32
+	Err          error
+}
+
+func (e *DeleteKeyError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("promoted key %d, new child ref %v: %s", e.DemotedNode.Key, e.NewChildNode, e.Err.Error())
+	}
+	return fmt.Sprintf("promoted key %d, new child ref %v", e.DemotedNode.Key, e.NewChildNode)
+}
+
+// Unwrap allows this error to be unwrapped to reveal the underlying error
+func (e *DeleteKeyError) Unwrap() error {
+	return e.Err
+}
+
+func DeleteNode() error {
+	return fmt.Errorf("tree: DeleteNode Error: not implemented")
+}
 func (t tree) Delete(key int32) error {
 
 	// if table is empty
@@ -424,64 +445,68 @@ func (t tree) Delete(key int32) error {
 	}
 	currentPage := dsk.RecData.(TreePage)
 	if currentPage.Head.IsLeaf {
-
-		var delIdx, numCurrentKeys = -1, 0
 		for _, v := range currentPage.Data {
 			if IsNodeEmpty(v) {
 				break
 			}
 			if v.Key == key {
-				delIdx = numCurrentKeys
+				err = DeleteNode()
+				if err != nil {
+					return fmt.Errorf("tree: Delete Error:%w", err)
+				}
+				return nil
 			}
-			numCurrentKeys++
 		}
-		if delIdx == -1 {
-			return fmt.Errorf("tree: Delete Error: key %d not found", key)
-		}
-
-		NodeBuf := make([]DataNode, numCurrentKeys-1)
-		copy(NodeBuf, currentPage.Data[:delIdx])
-		copy(NodeBuf[delIdx:], currentPage.Data[delIdx+1:numCurrentKeys])
-
-		//if current page is root and , we can just delete the root
-		if currentPage.Head.IsRoot && len(NodeBuf) == 0 {
-			// if current page is root and has no keys, we can just delete the root
-			err = t.table.DelDiskData()
-			if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			hdr, err := t.table.GetDBHeader()
-			if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			hdr.RootAddr = -1 // Set root to -1
-			err = t.table.WrtDBHeader(*hdr)
-			if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			t.table.SrtOff = -1 // Set start offset to -1
-			t.table.Cursor = -1 // Set cursor to -1
-			return nil
-		}
-		// if current page is greater than MIN_KEYS, we can just copy the existing leaf page children
-		if len(NodeBuf) <= MIN_KEYS || currentPage.Head.IsRoot {
-
-			currentPage.Data = [MAX_KEYS]DataNode{}
-			copy(currentPage.Data[:], NodeBuf)
-			err = t.table.EdtDiskData(currentPage)
-			if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			return nil
-		}
-
-		// if current page is less than MIN_KEYS and not root, we need to merge with a sibling or borrow from a sibling
-		// Borrowing logic is not implemented in this example, but you can implement it as needed.
-		// Merging logic is not implemented in this example, but you can implement it as needed.
-		return fmt.Errorf("tree: Delete Error: current page has less than MIN_KEYS and is not root, merging or borrowing logic not implemented")
+		return fmt.Errorf("tree: Delete Error: key %d not found", key)
 	}
-	// internal node case
-
+	for i := 0; i < MAX_KEYS; i++ {
+		if IsNodeEmpty(currentPage.Data[i]) {
+			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+				return fmt.Errorf("tree: Update Error: key %d not found", key)
+			}
+			t.table.Cursor = currentPage.Chld[i]
+			// use error for underflow logic
+			err = t.Delete(key)
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			return nil
+		}
+		if currentPage.Data[i].Key == key {
+			err = DeleteNode()
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			return nil
+		}
+		if currentPage.Data[i].Key > key {
+			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+				return fmt.Errorf("tree: Delete Error: key %d not found", key)
+			}
+			t.table.Cursor = currentPage.Chld[i]
+			// use error for underflow logic
+			err = t.Delete(key)
+			if err != nil {
+				return fmt.Errorf("tree: Delete Error:%w", err)
+			}
+			return nil
+		}
+	}
+	numValidKeysInNode := 0
+	for _, v_key := range currentPage.Data {
+		if IsNodeEmpty(v_key) {
+			break
+		}
+		numValidKeysInNode++
+	}
+	if currentPage.Chld[numValidKeysInNode] == 0 || currentPage.Chld[numValidKeysInNode] == -1 {
+		return fmt.Errorf("tree: Delete Error: key %d not found (no rightmost child path)", key)
+	}
+	t.table.Cursor = currentPage.Chld[numValidKeysInNode]
+	err = t.Delete(key)
+	if err != nil {
+		return fmt.Errorf("tree: Delete Error:%w", err)
+	}
 	return nil
 }
 
@@ -535,7 +560,7 @@ func (t tree) Update(key int32, val string) error {
 		}
 		if currentPage.Data[i].Key > key {
 			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
-				return fmt.Errorf("tree: Select Error: key %d not found", key)
+				return fmt.Errorf("tree: Update Error: key %d not found", key)
 			}
 			t.table.Cursor = currentPage.Chld[i]
 			return t.Update(key, val)
