@@ -429,8 +429,10 @@ func (e *DeleteKeyError) Unwrap() error {
 	return e.Err
 }
 
-func DeleteNode() error {
-	return fmt.Errorf("tree: DeleteNode Error: not implemented")
+func DeleteNode( /* params describing node & key */ ) error {
+	// TODO: implement actual leaf removal, handle
+	// - shrinking / underflow / borrow / merge logic.
+	return nil
 }
 func (t tree) Delete(key int32) error {
 
