@@ -412,16 +412,16 @@ func (t tree) Select(key int32) (string, error) {
 }
 
 type DeleteKeyError struct {
-	DemotedNode  DataNode
-	NewChildNode int32
-	Err          error
+	isUnderfull bool       // Indicates if the node is underfull after deletion
+	UpdatedNode []DataNode // The node that was updated or demoted
+	Err         error
 }
 
 func (e *DeleteKeyError) Error() string {
 	if e.Err != nil {
-		return fmt.Sprintf("promoted key %d, new child ref %v: %s", e.DemotedNode.Key, e.NewChildNode, e.Err.Error())
+		return fmt.Sprintf("node is underfull after deletion, %t:%s", e.isUnderfull, e.Error())
 	}
-	return fmt.Sprintf("promoted key %d, new child ref %v", e.DemotedNode.Key, e.NewChildNode)
+	return fmt.Sprintf("node is underfull after deletion, %t", e.isUnderfull)
 }
 
 // Unwrap allows this error to be unwrapped to reveal the underlying error
@@ -429,11 +429,82 @@ func (e *DeleteKeyError) Unwrap() error {
 	return e.Err
 }
 
-func DeleteNode( /* params describing node & key */ ) error {
-	// TODO: implement actual leaf removal, handle
-	// - shrinking / underflow / borrow / merge logic.
+func (t tree) DeleteLeafNode(currentPage TreePage, key int32) error {
+
+	delIdx := -1
+	numCurrentKeys := 0
+	for i, v := range currentPage.Data {
+		if IsNodeEmpty(v) {
+			break
+		}
+		if v.Key == key {
+			delIdx = i
+		}
+		numCurrentKeys++
+	}
+	if delIdx == -1 {
+		return fmt.Errorf("DeleteLeafNode Error: key %d not found", key)
+	}
+	NodeBuf := make([]DataNode, numCurrentKeys-1)
+	copy(NodeBuf, currentPage.Data[:delIdx])
+	copy(NodeBuf[delIdx:], currentPage.Data[delIdx+1:numCurrentKeys])
+	currentPage.Data = [MAX_KEYS]DataNode{}
+	copy(currentPage.Data[:], NodeBuf)
+	if len(NodeBuf) < MIN_KEYS {
+		return &DeleteKeyError{
+			isUnderfull: true,
+			UpdatedNode: NodeBuf,
+			Err:         fmt.Errorf("DeleteLeafNode Error: node is underfull after deletion, key %d", key),
+		}
+	}
+	err := t.table.EdtDiskData(currentPage)
+	if err != nil {
+		return fmt.Errorf("DeleteLeafNode error: %w", err)
+	}
+	return nil // TODO: implement actual leaf removal, handle
+}
+
+func (t tree) DeleteNode(currentPage TreePage, key int32) error {
+
+	delidx := -1
+	numCurrentKeys := 0
+	for i, v := range currentPage.Data {
+		if IsNodeEmpty(v) {
+			break
+		}
+		if v.Key == key {
+			delidx = i
+		}
+		numCurrentKeys++
+	}
+	if delidx == -1 {
+		return fmt.Errorf("DeleteNode Error: key %d not found", key)
+	}
+
+	nodeBuf := make([]DataNode, numCurrentKeys)
+	chldBuf := make([]int32, numCurrentKeys+1)
+	copy(nodeBuf, currentPage.Data[:delidx])
+	copy(nodeBuf[delidx:], currentPage.Data[delidx+1:numCurrentKeys])
+	copy(chldBuf, currentPage.Chld[:delidx+1])
+	copy(chldBuf[delidx:], currentPage.Chld[delidx+1:numCurrentKeys+1])
+	if len(nodeBuf) < MIN_KEYS {
+		return &DeleteKeyError{
+			isUnderfull: true,
+			UpdatedNode: nodeBuf,
+			Err:         fmt.Errorf("DeleteNode Error: node is underfull after deletion, key %d", key),
+		}
+	}
+	currentPage.Data = [MAX_KEYS]DataNode{}
+	copy(currentPage.Data[:], nodeBuf)
+	currentPage.Chld = [MAX_CHILDREN]int32{}
+	copy(currentPage.Chld[:], chldBuf)
+	err := t.table.EdtDiskData(currentPage)
+	if err != nil {
+		return fmt.Errorf("DeleteNode error: %w", err)
+	}
 	return nil
 }
+
 func (t tree) Delete(key int32) error {
 
 	// if table is empty
@@ -446,13 +517,14 @@ func (t tree) Delete(key int32) error {
 		return fmt.Errorf("tree: Delete Error:%w", err)
 	}
 	currentPage := dsk.RecData.(TreePage)
+	currentPageAddr := dsk.RecHead.RecAddr
 	if currentPage.Head.IsLeaf {
 		for _, v := range currentPage.Data {
 			if IsNodeEmpty(v) {
 				break
 			}
 			if v.Key == key {
-				err = DeleteNode()
+				err = t.DeleteLeafNode(currentPage, key)
 				if err != nil {
 					return fmt.Errorf("tree: Delete Error:%w", err)
 				}
@@ -469,13 +541,56 @@ func (t tree) Delete(key int32) error {
 			t.table.Cursor = currentPage.Chld[i]
 			// use error for underflow logic
 			err = t.Delete(key)
+			if errors.As(err, new(*DeleteKeyError)) {
+				// If we get a DeleteKeyError, it means we need to demote a key from the child node
+				t.table.Cursor = currentPage.Chld[i-1]
+				leftSibDsk, err := t.table.GetDiskData()
+				if err != nil {
+					return fmt.Errorf("tree: Delete Error:%w", err)
+				}
+				lefSiblingPage := leftSibDsk.RecData.(TreePage)
+				t.table.Cursor = currentPage.Chld[i]
+				deletedNodeDsk, err := t.table.GetDiskData()
+				if err != nil {
+					return fmt.Errorf("tree: Delete Error:%w", err)
+				}
+				deletedNodePage := deletedNodeDsk.RecData.(TreePage)
+				if len(lefSiblingPage.Data) > MIN_KEYS {
+					//borrow from sibling
+					maxNode := lefSiblingPage.Data[len(lefSiblingPage.Data)-1]
+					lefSiblingPage.Data[len(lefSiblingPage.Data)-1] = DataNode{} // Clear the last node
+					parentNode := currentPage.Data[i-1]
+					currentPage.Data[i-1] = maxNode                                                    // Promote the max node from left sibling to parent
+					copy(deletedNodePage.Data[1:], deletedNodePage.Data[:len(deletedNodePage.Data)-1]) // Shift left
+					deletedNodePage.Data[0] = parentNode
+					t.table.Cursor = leftSibDsk.RecHead.RecAddr
+					err = t.table.EdtDiskData(lefSiblingPage)
+					if err != nil {
+						return fmt.Errorf("tree: Delete Error:%w", err)
+					}
+					t.table.Cursor = deletedNodeDsk.RecHead.RecAddr
+					err = t.table.EdtDiskData(deletedNodePage)
+					if err != nil {
+						return fmt.Errorf("tree: Delete Error:%w", err)
+					}
+					t.table.Cursor = currentPageAddr
+					err = t.table.EdtDiskData(currentPage)
+					if err != nil {
+						return fmt.Errorf("tree: Delete Error:%w", err)
+					}
+					return nil
+				}
+				//merge with sibling
+				t.table.Cursor = currentPageAddr
+				return fmt.Errorf("tree: Delete Error: key %d not found, but sibling underflow logic not implemented", key)
+			}
 			if err != nil {
 				return fmt.Errorf("tree: Delete Error:%w", err)
 			}
 			return nil
 		}
 		if currentPage.Data[i].Key == key {
-			err = DeleteNode()
+			err = t.DeleteNode(currentPage, key)
 			if err != nil {
 				return fmt.Errorf("tree: Delete Error:%w", err)
 			}
@@ -486,9 +601,50 @@ func (t tree) Delete(key int32) error {
 				return fmt.Errorf("tree: Delete Error: key %d not found", key)
 			}
 			t.table.Cursor = currentPage.Chld[i]
-			// use error for underflow logic
 			err = t.Delete(key)
-			if err != nil {
+			if errors.As(err, new(*DeleteKeyError)) {
+				// If we get a DeleteKeyError, it means we need to demote a key from the child node
+				t.table.Cursor = currentPage.Chld[i-1]
+				leftSibDsk, err := t.table.GetDiskData()
+				if err != nil {
+					return fmt.Errorf("tree: Delete Error:%w", err)
+				}
+				lefSiblingPage := leftSibDsk.RecData.(TreePage)
+				t.table.Cursor = currentPage.Chld[i]
+				deletedNodeDsk, err := t.table.GetDiskData()
+				if err != nil {
+					return fmt.Errorf("tree: Delete Error:%w", err)
+				}
+				deletedNodePage := deletedNodeDsk.RecData.(TreePage)
+				if len(lefSiblingPage.Data) > MIN_KEYS {
+					//borrow from sibling
+					maxNode := lefSiblingPage.Data[len(lefSiblingPage.Data)-1]
+					lefSiblingPage.Data[len(lefSiblingPage.Data)-1] = DataNode{} // Clear the last node
+					parentNode := currentPage.Data[i-1]
+					currentPage.Data[i-1] = maxNode                                                    // Promote the max node from left sibling to parent
+					copy(deletedNodePage.Data[1:], deletedNodePage.Data[:len(deletedNodePage.Data)-1]) // Shift left
+					deletedNodePage.Data[0] = parentNode
+					t.table.Cursor = leftSibDsk.RecHead.RecAddr
+					err = t.table.EdtDiskData(lefSiblingPage)
+					if err != nil {
+						return fmt.Errorf("tree: Delete Error:%w", err)
+					}
+					t.table.Cursor = deletedNodeDsk.RecHead.RecAddr
+					err = t.table.EdtDiskData(deletedNodePage)
+					if err != nil {
+						return fmt.Errorf("tree: Delete Error:%w", err)
+					}
+					t.table.Cursor = currentPageAddr
+					err = t.table.EdtDiskData(currentPage)
+					if err != nil {
+						return fmt.Errorf("tree: Delete Error:%w", err)
+					}
+					return nil
+				}
+				//merge with sibling
+				t.table.Cursor = currentPageAddr
+				return fmt.Errorf("tree: Delete Error: key %d not found, but sibling underflow logic not implemented", key)
+			} else if err != nil {
 				return fmt.Errorf("tree: Delete Error:%w", err)
 			}
 			return nil
@@ -506,7 +662,9 @@ func (t tree) Delete(key int32) error {
 	}
 	t.table.Cursor = currentPage.Chld[numValidKeysInNode]
 	err = t.Delete(key)
-	if err != nil {
+	if errors.As(err, new(*DeleteKeyError)) {
+		// If we get a DeleteKeyError, it means we need to demote a key from the child node
+	} else if err != nil {
 		return fmt.Errorf("tree: Delete Error:%w", err)
 	}
 	return nil
