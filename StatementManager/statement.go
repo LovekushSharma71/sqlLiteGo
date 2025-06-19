@@ -1,135 +1,234 @@
 package main
 
-// import (
-// 	diskmanager "db/DiskManager"
-// 	"fmt"
-// 	"os"
-// 	"strconv"
-// 	"strings"
-// )
+import (
+	diskmanager "db/DiskManager"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
 
-// const (
-// 	PREPARE_SUCCESS = iota
-// 	PREPARE_UNRECOGNIZED_STATEMENT
-// 	PREPARE_SYNTAX_ERROR
-// )
+const (
+	STATEMENT_DB_INSERT = iota
+	STATEMENT_DB_SELECT
+	STATEMENT_DB_UPDATE
+	STATEMENT_DB_DELETE
+	STATEMENT_DB_CREATE
+	STATEMENT_DB_DROPDB
+	STATEMENT_DB_SWITCH
+)
 
-// const (
-// 	STATEMENT_INSERT = iota
-// 	STATEMENT_SELECT
-// )
+type StatementType int
+type Table diskmanager.Table
 
-// const (
-// 	EXECUTE_SUCCESS = iota
-// 	EXECUTE_TABLE_FULL
-// 	EXECUTE_INVALID_STATEMENT
-// 	EXECUTE_INSERT_FAILED
-// )
+type KV struct {
+	Key int32
+	Val string
+}
 
-// type StatementType int
-// type Table diskmanager.Table
-// type InputBuffer string
+type DBInfo struct {
+	Name string
+	Type string
+}
 
-// type Statement struct {
-// 	Type        StatementType
-// 	Index int32
-// }
+type Statement struct {
+	Cmd StatementType
+	Inp interface{}
+}
 
-// const (
-// 	META_COMMAND_SUCCESS = iota
-// 	META_COMMAND_UNRECOGNIZED_COMMAND
-// )
+type ExecutionInfo struct {
+	StatementDetails Statement
+	TableDetails     diskmanager.Table
+}
 
-// func DoMetaCommand(inp string, table *Table) int {
-// 	if inp == ".exit" {
-// 		os.Exit(0)
-// 	}
-// 	return META_COMMAND_UNRECOGNIZED_COMMAND
-// }
+func DoMetaCommand(cmd string) error {
+	if cmd == ".exit" {
+		os.Exit(0)
+	}
+	return fmt.Errorf("unrecognised meta command: %s", cmd)
+}
 
-// func (s *Statement) PrepareStatement(inpBuff InputBuffer) int {
-// 	if inpBuff.inputLenght >= 6 && strings.ToLower(inpBuff.inputString[0:6]) == "insert" {
-// 		s.Type = STATEMENT_INSERT
+func (s *Statement) PrepareStatement(inpBuf string) error {
 
-// 		args := strings.Split(inpBuff.inputString, " ")
-// 		if len(args) < 4 {
-// 			return PREPARE_SYNTAX_ERROR
-// 		}
+	if len(inpBuf) < 6 {
+		return fmt.Errorf("statement error: invalid statement %s", inpBuf)
+	}
 
-// 		id, err := strconv.Atoi(args[1])
-// 		if err != nil {
-// 			fmt.Println("Error id should be integer\nusage: insert id username email")
-// 			return PREPARE_UNRECOGNIZED_STATEMENT
-// 		}
+	switch cmd := inpBuf[:6]; strings.ToLower(cmd) {
+	case "insert":
+		s.Cmd = STATEMENT_DB_INSERT
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 3 {
+			return fmt.Errorf("statement error: syntax error\n ussage: insert key value")
+		}
+		key, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("statement error: invalid key provided %w", err)
+		}
+		if len(args[2]) > 32 {
+			return fmt.Errorf("statement error: string length cannot exceed 32 got %d", len(args[2]))
+		}
+		s.Inp = KV{
+			Key: int32(key),
+			Val: args[2],
+		}
+	case "select":
+		s.Cmd = STATEMENT_DB_SELECT
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 2 {
+			return fmt.Errorf("statement error: syntax error\n ussage: select key or select all")
+		}
+		if args[1] == "all" {
+			s.Inp = "all"
+		} else {
+			key, err := strconv.Atoi(args[1])
+			if err != nil {
+				return fmt.Errorf("statement error: invalid key provided %w", err)
+			}
+			s.Inp = KV{
+				Key: int32(key),
+				Val: "",
+			}
+		}
+	case "update":
+		s.Cmd = STATEMENT_DB_UPDATE
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 3 {
+			return fmt.Errorf("statement error: syntax error\n ussage: update key value")
+		}
+		key, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("statement error: invalid key provided %w", err)
+		}
+		if len(args[2]) > 32 {
+			return fmt.Errorf("statement error: string length cannot exceed 32 got %d", len(args[2]))
+		}
+		s.Inp = KV{
+			Key: int32(key),
+			Val: args[2],
+		}
+	case "delete":
+		s.Cmd = STATEMENT_DB_DELETE
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 2 {
+			return fmt.Errorf("statement error: syntax error\n ussage: delete key")
+		}
+		key, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("statement error: invalid key provided %w", err)
+		}
+		s.Inp = KV{
+			Key: int32(key),
+			Val: "",
+		}
+	case "create":
+		s.Cmd = STATEMENT_DB_CREATE
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 3 {
+			return fmt.Errorf("statement error: syntax error\n ussage: create dbname tabletype")
+		}
+		if len(args[1]) < 32 {
+			return fmt.Errorf("statement error: database name length should not exceed 32")
+		}
+		allowedDBType := []string{"tree", "list"}
+		isValid := false
+		for _, v := range allowedDBType {
+			if strings.ToLower(args[2]) == v {
+				s.Inp = DBInfo{
+					Name: args[1],
+					Type: v,
+				}
+				isValid = true
+			}
+		}
+		if !isValid {
+			return fmt.Errorf("statement error: invalid tree type allowed db table types are %v", allowedDBType)
+		}
+	case "dropdb":
+		s.Cmd = STATEMENT_DB_CREATE
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 2 {
+			return fmt.Errorf("statement error: syntax error\n ussage: dropdb dbname")
+		}
+		if len(args[1]) < 32 {
+			return fmt.Errorf("statement error: database name length should not exceed 32")
+		}
+		s.Inp = DBInfo{
+			Name: args[1],
+		}
+	case "switch":
+		s.Cmd = STATEMENT_DB_SWITCH
+		args := strings.Split(inpBuf, " ")
+		if len(args) != 2 {
+			return fmt.Errorf("statement error: syntax error\n ussage: drop dbname")
+		}
+		if len(args[1]) < 32 {
+			return fmt.Errorf("statement error: database name length should not exceed 32")
+		}
+		s.Inp = DBInfo{
+			Name: args[1],
+		}
+	default:
+		return fmt.Errorf("statemnet error: invalid command %s", cmd)
+	}
+	return nil
+}
 
-// 		s.RowToInsert.Id = int32(id)
-// 		if len(args[2]) > 255 || len(args[2]) == 0 {
-// 			fmt.Println("Username(varchar(255)) cannot be of size:", len(args[2]))
-// 			return PREPARE_SYNTAX_ERROR
-// 		}
-// 		copy(s.RowToInsert.Username[:], []byte(args[2]))
-
-// 		if len(args[3]) > 255 || len(args[3]) == 0 {
-// 			fmt.Println("Username(varchar(255)) cannot be of size:", len(args[2]))
-// 			return PREPARE_SYNTAX_ERROR
-// 		}
-// 		copy(s.RowToInsert.Email[:], []byte(args[3]))
-
-// 	} else if inpBuff.inputLenght >= 6 && strings.ToLower(inpBuff.inputString[0:6]) == "select" {
-// 		s.Type = STATEMENT_SELECT
-// 	} else {
-// 		return PREPARE_UNRECOGNIZED_STATEMENT
-// 	}
-// 	return PREPARE_SUCCESS
-// }
-
-// func printRow(row *Row) {
-// 	fmt.Printf("%d %s %s\n", row.Id, row.Username, row.Email)
-// }
-
-// func (s *Statement) ExecuteInsert(table *Table) int {
-// 	if int(table.NumRows) >= TABLE_MAX_ROWS {
-// 		return EXECUTE_TABLE_FULL
-// 	}
-// 	var rowToInsert *Row = &s.RowToInsert
-// 	data, err := SerializeRow(rowToInsert)
-// 	if err != nil {
-// 		return EXECUTE_INSERT_FAILED
-// 	}
-// 	pageNum := table.NumRows / uint32(ROWS_PER_PAGE)
-// 	rowNum := table.NumRows % uint32(ROWS_PER_PAGE)
-// 	table.Pager.Pages[pageNum][rowNum] = data
-// 	table.NumRows += 1
-// 	return EXECUTE_SUCCESS
-// }
-
-// func (s *Statement) ExecuteSelect(table *Table) int {
-// 	var row *Row
-// 	// fmt.Println(table.NumRows)
-// 	for i := uint32(0); i < table.NumRows; i++ {
-// 		data, err := table.GetRowFromTable(i)
-// 		if err != nil {
-// 			fmt.Println(err.Error())
-// 			continue
-// 		}
-// 		row, err = DeserializeRow(data)
-// 		if err != nil {
-// 			fmt.Println(err.Error())
-// 			continue
-// 		}
-// 		printRow(row)
-// 	}
-// 	return EXECUTE_SUCCESS
-// }
-
-// func (s *Statement) ExecuteStatement(table *Table) int {
-// 	switch s.Type {
-// 	case STATEMENT_INSERT:
-// 		// fmt.Println("Insert execution routine")
-// 		return s.ExecuteInsert(table)
-// 	case STATEMENT_SELECT:
-// 		// fmt.Println("Select execution routine")
-// 		return s.ExecuteSelect(table)
-// 	}
-// 	return EXECUTE_INVALID_STATEMENT
-// }
+func (e *ExecutionInfo) ExecuteStatement() error {
+	switch e.StatementDetails.Cmd {
+	case STATEMENT_DB_INSERT:
+		kv := e.StatementDetails.Inp.(KV)
+		err := e.TableDetails.Insert(kv.Key, kv.Val)
+		if err != nil {
+			return fmt.Errorf("execute error: %w", err)
+		}
+		fmt.Println("execute success: insert")
+	case STATEMENT_DB_SELECT:
+		inp, ok := e.StatementDetails.Inp.(KV)
+		if !ok {
+			err := e.TableDetails.SelectAll()
+			if err != nil {
+				return fmt.Errorf("execute error:%w", err)
+			}
+		}
+		val, err := e.TableDetails.Select(inp.Key)
+		if err != nil {
+			return fmt.Errorf("execute error:%w", err)
+		}
+		fmt.Printf("output- Key:%d Value:%s\n", inp.Key, val)
+	case STATEMENT_DB_UPDATE:
+		kv := e.StatementDetails.Inp.(KV)
+		err := e.TableDetails.Update(kv.Key, kv.Val)
+		if err != nil {
+			return fmt.Errorf("execute error: %w", err)
+		}
+		fmt.Println("execute success: update")
+	case STATEMENT_DB_DELETE:
+		kv := e.StatementDetails.Inp.(KV)
+		err := e.TableDetails.Delete(kv.Key)
+		if err != nil {
+			return fmt.Errorf("execute error: %w", err)
+		}
+		fmt.Println("execute success: delete")
+	case STATEMENT_DB_CREATE:
+		info := e.StatementDetails.Inp.(DBInfo)
+		err := diskmanager.CreateDatabase(info.Name, info.Type)
+		if err != nil {
+			return fmt.Errorf("execute error: %w", err)
+		}
+		fmt.Println("execute success: create")
+	case STATEMENT_DB_SWITCH:
+		info := e.StatementDetails.Inp.(DBInfo)
+		dsk, err := diskmanager.InitDatabase(info.Name)
+		if err != nil {
+			return fmt.Errorf("execute error: %w", err)
+		}
+		e.TableDetails = diskmanager.InitTable(dsk)
+		fmt.Println("execute success: switched to database: ", info.Name)
+	case STATEMENT_DB_DROPDB:
+		return fmt.Errorf("execute error: db drop not implemented")
+	default:
+		return fmt.Errorf("unrecognised command")
+	}
+	return nil
+}

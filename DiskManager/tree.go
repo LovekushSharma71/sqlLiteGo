@@ -3,7 +3,6 @@ package diskmanager
 import (
 	"errors"
 	"fmt"
-	"syscall"
 )
 
 type tree struct {
@@ -412,342 +411,381 @@ func (t tree) Select(key int32) (string, error) {
 	return t.Select(key)
 }
 
-type DeleteKeyError struct {
-	isUnderfull bool       // Indicates if the node is underfull after deletion
-	UpdatedNode []DataNode // The node that was updated or demoted
-	Err         error
-}
+// type DeleteKeyError struct {
+// 	isUnderfull bool       // Indicates if the node is underfull after deletion
+// 	UpdatedNode []DataNode // The node that was updated or demoted
+// 	Err         error
+// }
 
-func (e *DeleteKeyError) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("node is underfull after deletion, %t:%s", e.isUnderfull, e.Error())
-	}
-	return fmt.Sprintf("node is underfull after deletion, %t", e.isUnderfull)
-}
+// func (e *DeleteKeyError) Error() string {
+// 	if e.Err != nil {
+// 		return fmt.Sprintf("node is underfull after deletion, %t:%s", e.isUnderfull, e.Error())
+// 	}
+// 	return fmt.Sprintf("node is underfull after deletion, %t", e.isUnderfull)
+// }
 
-// Unwrap allows this error to be unwrapped to reveal the underlying error
-func (e *DeleteKeyError) Unwrap() error {
-	return e.Err
-}
+// // Unwrap allows this error to be unwrapped to reveal the underlying error
+// func (e *DeleteKeyError) Unwrap() error {
+// 	return e.Err
+// }
 
-func (t tree) DeleteLeafNode(currentPage TreePage, key int32) error {
+// func (t tree) DeleteLeafNode(currentPage TreePage, key int32) error {
 
-	delIdx := -1
-	numCurrentKeys := 0
-	for i, v := range currentPage.Data {
-		if IsNodeEmpty(v) {
-			break
-		}
-		if v.Key == key {
-			delIdx = i
-		}
-		numCurrentKeys++
-	}
-	if delIdx == -1 {
-		return fmt.Errorf("DeleteLeafNode Error: key %d not found", key)
-	}
-	NodeBuf := make([]DataNode, numCurrentKeys-1)
-	copy(NodeBuf, currentPage.Data[:delIdx])
-	copy(NodeBuf[delIdx:], currentPage.Data[delIdx+1:numCurrentKeys])
-	currentPage.Data = [MAX_KEYS]DataNode{}
-	copy(currentPage.Data[:], NodeBuf)
-	if len(NodeBuf) < MIN_KEYS {
-		return &DeleteKeyError{
-			isUnderfull: true,
-			UpdatedNode: NodeBuf,
-			Err:         fmt.Errorf("DeleteLeafNode Error: node is underfull after deletion, key %d", key),
-		}
-	}
-	err := t.table.EdtDiskData(currentPage)
-	if err != nil {
-		return fmt.Errorf("DeleteLeafNode error: %w", err)
-	}
-	return nil // TODO: implement actual leaf removal, handle
-}
+// 	delIdx := -1
+// 	numCurrentKeys := 0
+// 	for i, v := range currentPage.Data {
+// 		if IsNodeEmpty(v) {
+// 			break
+// 		}
+// 		if v.Key == key {
+// 			delIdx = i
+// 		}
+// 		numCurrentKeys++
+// 	}
+// 	if delIdx == -1 {
+// 		return fmt.Errorf("DeleteLeafNode Error: key %d not found", key)
+// 	}
+// 	NodeBuf := make([]DataNode, numCurrentKeys-1)
+// 	copy(NodeBuf, currentPage.Data[:delIdx])
+// 	copy(NodeBuf[delIdx:], currentPage.Data[delIdx+1:numCurrentKeys])
+// 	currentPage.Data = [MAX_KEYS]DataNode{}
+// 	copy(currentPage.Data[:], NodeBuf)
+// 	if len(NodeBuf) < MIN_KEYS {
+// 		return &DeleteKeyError{
+// 			isUnderfull: true,
+// 			UpdatedNode: NodeBuf,
+// 			Err:         fmt.Errorf("DeleteLeafNode Error: node is underfull after deletion, key %d", key),
+// 		}
+// 	}
+// 	err := t.table.EdtDiskData(currentPage)
+// 	if err != nil {
+// 		return fmt.Errorf("DeleteLeafNode error: %w", err)
+// 	}
+// 	return nil // TODO: implement actual leaf removal, handle
+// }
 
-func (t tree) DeleteNode(currentPage TreePage, key int32) error {
+// func (t tree) DeleteNode(currentPage TreePage, key int32) error {
 
-	delidx := -1
-	numCurrentKeys := 0
-	for i, v := range currentPage.Data {
-		if IsNodeEmpty(v) {
-			break
-		}
-		if v.Key == key {
-			delidx = i
-		}
-		numCurrentKeys++
-	}
-	if delidx == -1 {
-		return fmt.Errorf("DeleteNode Error: key %d not found", key)
-	}
+// 	delidx := -1
+// 	numCurrentKeys := 0
+// 	for i, v := range currentPage.Data {
+// 		if IsNodeEmpty(v) {
+// 			break
+// 		}
+// 		if v.Key == key {
+// 			delidx = i
+// 		}
+// 		numCurrentKeys++
+// 	}
+// 	if delidx == -1 {
+// 		return fmt.Errorf("DeleteNode Error: key %d not found", key)
+// 	}
 
-	nodeBuf := make([]DataNode, numCurrentKeys)
-	chldBuf := make([]int32, numCurrentKeys+1)
-	copy(nodeBuf, currentPage.Data[:delidx])
-	copy(nodeBuf[delidx:], currentPage.Data[delidx+1:numCurrentKeys])
-	copy(chldBuf, currentPage.Chld[:delidx+1])
-	copy(chldBuf[delidx:], currentPage.Chld[delidx+1:numCurrentKeys+1])
-	if len(nodeBuf) < MIN_KEYS {
-		return &DeleteKeyError{
-			isUnderfull: true,
-			UpdatedNode: nodeBuf,
-			Err:         fmt.Errorf("DeleteNode Error: node is underfull after deletion, key %d", key),
-		}
-	}
-	currentPage.Data = [MAX_KEYS]DataNode{}
-	copy(currentPage.Data[:], nodeBuf)
-	currentPage.Chld = [MAX_CHILDREN]int32{}
-	copy(currentPage.Chld[:], chldBuf)
-	err := t.table.EdtDiskData(currentPage)
-	if err != nil {
-		return fmt.Errorf("DeleteNode error: %w", err)
-	}
-	return nil
-}
+// 	nodeBuf := make([]DataNode, numCurrentKeys)
+// 	chldBuf := make([]int32, numCurrentKeys+1)
+// 	copy(nodeBuf, currentPage.Data[:delidx])
+// 	copy(nodeBuf[delidx:], currentPage.Data[delidx+1:numCurrentKeys])
+// 	copy(chldBuf, currentPage.Chld[:delidx+1])
+// 	copy(chldBuf[delidx:], currentPage.Chld[delidx+1:numCurrentKeys+1])
+// 	if len(nodeBuf) < MIN_KEYS {
+// 		return &DeleteKeyError{
+// 			isUnderfull: true,
+// 			UpdatedNode: nodeBuf,
+// 			Err:         fmt.Errorf("DeleteNode Error: node is underfull after deletion, key %d", key),
+// 		}
+// 	}
+// 	currentPage.Data = [MAX_KEYS]DataNode{}
+// 	copy(currentPage.Data[:], nodeBuf)
+// 	currentPage.Chld = [MAX_CHILDREN]int32{}
+// 	copy(currentPage.Chld[:], chldBuf)
+// 	err := t.table.EdtDiskData(currentPage)
+// 	if err != nil {
+// 		return fmt.Errorf("DeleteNode error: %w", err)
+// 	}
+// 	return nil
+// }
 
-func (t tree) Borrow(currPageAddr int32, idx int) error {
+// func (t tree) Borrow(currPageAddr int32, idx int) error {
 
-	if currPageAddr == -1 || currPageAddr == 0 {
-		return fmt.Errorf("Borrow error: invalid address")
-	}
-	t.table.Cursor = currPageAddr
-	currDsk, err := t.table.GetDiskData()
-	if err != nil {
-		return fmt.Errorf("Borrow error:%w", err)
-	}
-	currPage := currDsk.RecData.(TreePage)
+// 	if currPageAddr == -1 || currPageAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = currPageAddr
+// 	currDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	currPage := currDsk.RecData.(TreePage)
 
-	ChldAddr := currPage.Chld[idx]
-	if ChldAddr == -1 || ChldAddr == 0 {
-		return fmt.Errorf("Borrow error: invalid address")
-	}
-	t.table.Cursor = ChldAddr
-	chldDsk, err := t.table.GetDiskData()
-	if err != nil {
-		return fmt.Errorf("Borrow error:%w", err)
-	}
-	chldPage := chldDsk.RecData.(TreePage)
+// 	ChldAddr := currPage.Chld[idx]
+// 	if ChldAddr == -1 || ChldAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = ChldAddr
+// 	chldDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	chldPage := chldDsk.RecData.(TreePage)
 
-	leftChldAddr := currPage.Chld[idx-1]
-	if leftChldAddr == -1 || leftChldAddr == 0 {
-		return fmt.Errorf("Borrow error: invalid address")
-	}
-	t.table.Cursor = leftChldAddr
-	leftChldDsk, err := t.table.GetDiskData()
-	if err != nil {
-		return fmt.Errorf("Borrow error:%w", err)
-	}
-	leftChldPage := leftChldDsk.RecData.(TreePage)
+// 	leftChldAddr := currPage.Chld[idx-1]
+// 	if leftChldAddr == -1 || leftChldAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = leftChldAddr
+// 	leftChldDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	leftChldPage := leftChldDsk.RecData.(TreePage)
 
-	rightChldAddr := currPage.Chld[idx+1]
-	if rightChldAddr == -1 || rightChldAddr == 0 {
-		return fmt.Errorf("Borrow error: invalid address")
-	}
-	t.table.Cursor = rightChldAddr
-	rightChldDsk, err := t.table.GetDiskData()
-	if err != nil {
-		return fmt.Errorf("Borrow error:%w", err)
-	}
-	rightChldPage := rightChldDsk.RecData.(TreePage)
+// 	rightChldAddr := currPage.Chld[idx+1]
+// 	if rightChldAddr == -1 || rightChldAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = rightChldAddr
+// 	rightChldDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	rightChldPage := rightChldDsk.RecData.(TreePage)
 
-	numLeftKeys := -1
-	for i, v := range leftChldPage.Data {
-		if IsNodeEmpty(v) {
-			numLeftKeys = i
-			break
-		}
-	}
-	if numLeftKeys > MIN_KEYS {
-		leftMax := leftChldPage.Data[numLeftKeys-1]
-		leftChldPage.Data[numLeftKeys-1] = DataNode{}
-		curr := currPage.Data[idx]
-		currPage.Data[idx] = leftMax
-		copy(chldPage.Data[1:], chldPage.Data[:])
-		chldPage.Data[0] = curr
+// 	numLeftKeys := -1
+// 	for i, v := range leftChldPage.Data {
+// 		if IsNodeEmpty(v) {
+// 			numLeftKeys = i
+// 			break
+// 		}
+// 	}
+// 	if numLeftKeys > MIN_KEYS {
+// 		leftMax := leftChldPage.Data[numLeftKeys-1]
+// 		leftChldPage.Data[numLeftKeys-1] = DataNode{}
+// 		curr := currPage.Data[idx]
+// 		currPage.Data[idx] = leftMax
+// 		copy(chldPage.Data[1:], chldPage.Data[:])
+// 		chldPage.Data[0] = curr
 
-		t.table.Cursor = currPageAddr
-		err = t.table.EdtDiskData(currPage)
-		if err != nil {
-			return fmt.Errorf("Borrow error: %w", err)
-		}
+// 		t.table.Cursor = currPageAddr
+// 		err = t.table.EdtDiskData(currPage)
+// 		if err != nil {
+// 			return fmt.Errorf("Borrow error: %w", err)
+// 		}
 
-		t.table.Cursor = leftChldAddr
-		err = t.table.EdtDiskData(leftChldPage)
-		if err != nil {
-			return fmt.Errorf("Borrow error: %w", err)
-		}
+// 		t.table.Cursor = leftChldAddr
+// 		err = t.table.EdtDiskData(leftChldPage)
+// 		if err != nil {
+// 			return fmt.Errorf("Borrow error: %w", err)
+// 		}
 
-		t.table.Cursor = ChldAddr
-		err = t.table.EdtDiskData(chldPage)
-		if err != nil {
-			return fmt.Errorf("Borrow error: %w", err)
-		}
-		return nil
-	}
-	numRightKeys := -1
-	for i, v := range leftChldPage.Data {
-		if IsNodeEmpty(v) {
-			numRightKeys = i
-			break
-		}
-	}
-	if numRightKeys > MIN_KEYS {
-		rightMax := rightChldPage.Data[0]
-		rightChldPage.Data[0] = DataNode{}
-		curr := currPage.Data[idx]
-		currPage.Data[idx] = rightMax
+// 		t.table.Cursor = ChldAddr
+// 		err = t.table.EdtDiskData(chldPage)
+// 		if err != nil {
+// 			return fmt.Errorf("Borrow error: %w", err)
+// 		}
+// 		return nil
+// 	}
+// 	numRightKeys := -1
+// 	for i, v := range leftChldPage.Data {
+// 		if IsNodeEmpty(v) {
+// 			numRightKeys = i
+// 			break
+// 		}
+// 	}
+// 	if numRightKeys > MIN_KEYS {
+// 		rightMax := rightChldPage.Data[0]
+// 		rightChldPage.Data[0] = DataNode{}
+// 		curr := currPage.Data[idx]
+// 		currPage.Data[idx] = rightMax
 
-		// can use MIN_KEYS+! but just in case
-		numChldKeys := -1
-		for i, v := range currPage.Data {
-			if IsNodeEmpty(v) {
-				numChldKeys = i
-				break
-			}
-		}
-		chldPage.Data[numChldKeys] = curr
+// 		// can use MIN_KEYS+! but just in case
+// 		numChldKeys := -1
+// 		for i, v := range currPage.Data {
+// 			if IsNodeEmpty(v) {
+// 				numChldKeys = i
+// 				break
+// 			}
+// 		}
+// 		chldPage.Data[numChldKeys] = curr
 
-		t.table.Cursor = currPageAddr
-		err = t.table.EdtDiskData(currPage)
-		if err != nil {
-			return fmt.Errorf("Borrow error: %w", err)
-		}
+// 		t.table.Cursor = currPageAddr
+// 		err = t.table.EdtDiskData(currPage)
+// 		if err != nil {
+// 			return fmt.Errorf("Borrow error: %w", err)
+// 		}
 
-		t.table.Cursor = rightChldAddr
-		err = t.table.EdtDiskData(leftChldPage)
-		if err != nil {
-			return fmt.Errorf("Borrow error: %w", err)
-		}
+// 		t.table.Cursor = rightChldAddr
+// 		err = t.table.EdtDiskData(leftChldPage)
+// 		if err != nil {
+// 			return fmt.Errorf("Borrow error: %w", err)
+// 		}
 
-		t.table.Cursor = ChldAddr
-		err = t.table.EdtDiskData(chldPage)
-		if err != nil {
-			return fmt.Errorf("Borrow error: %w", err)
-		}
-		return nil
-	}
-	t.table.Cursor = currPageAddr
-	// using syscall.EINVAL because dont want to create a custom error
-	return fmt.Errorf("Borrow error: %w", syscall.EINVAL)
-}
+// 		t.table.Cursor = ChldAddr
+// 		err = t.table.EdtDiskData(chldPage)
+// 		if err != nil {
+// 			return fmt.Errorf("Borrow error: %w", err)
+// 		}
+// 		return nil
+// 	}
+// 	t.table.Cursor = currPageAddr
+// 	// using syscall.EINVAL because dont want to create a custom error
+// 	return fmt.Errorf("Borrow error: %w", syscall.EINVAL)
+// }
 
-func (t tree) Merge() error {
-	return nil
-}
+// func (t tree) Merge(currPageAddr int32, idx int) error {
+
+// 	if currPageAddr == -1 || currPageAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = currPageAddr
+// 	currDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	currPage := currDsk.RecData.(TreePage)
+
+// 	ChldAddr := currPage.Chld[idx]
+// 	if ChldAddr == -1 || ChldAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = ChldAddr
+// 	chldDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	chldPage := chldDsk.RecData.(TreePage)
+
+// 	leftChldAddr := currPage.Chld[idx-1]
+// 	if leftChldAddr == -1 || leftChldAddr == 0 {
+// 		return fmt.Errorf("Borrow error: invalid address")
+// 	}
+// 	t.table.Cursor = leftChldAddr
+// 	leftChldDsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("Borrow error:%w", err)
+// 	}
+// 	leftChldPage := leftChldDsk.RecData.(TreePage)
+
+// 	mergedNodeBuf := append(append(leftChldPage.Data[:], currPage.Data[idx]), chldPage.Data[:]...)
+
+// 	return nil
+// }
+
+// func (t tree) Delete(key int32) error {
+
+// 	// if table is empty
+// 	if t.table.SrtOff == t.table.EndOff {
+// 		return fmt.Errorf("tree: Delete Error: table is empty")
+// 	}
+// 	// if table is not empty, we need to select all from the tree
+// 	dsk, err := t.table.GetDiskData()
+// 	if err != nil {
+// 		return fmt.Errorf("tree: Delete Error:%w", err)
+// 	}
+// 	currentPage := dsk.RecData.(TreePage)
+// 	currentPageAddr := dsk.RecHead.RecAddr
+// 	if currentPage.Head.IsLeaf {
+// 		for _, v := range currentPage.Data {
+// 			if IsNodeEmpty(v) {
+// 				break
+// 			}
+// 			if v.Key == key {
+// 				err = t.DeleteLeafNode(currentPage, key)
+// 				if err != nil {
+// 					return fmt.Errorf("tree: Delete Error:%w", err)
+// 				}
+// 				return nil
+// 			}
+// 		}
+// 		return fmt.Errorf("tree: Delete Error: key %d not found", key)
+// 	}
+// 	for i := 0; i < MAX_KEYS; i++ {
+// 		if IsNodeEmpty(currentPage.Data[i]) {
+// 			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+// 				return fmt.Errorf("tree: Update Error: key %d not found", key)
+// 			}
+// 			t.table.Cursor = currentPage.Chld[i]
+// 			err = t.Delete(key)
+// 			if errors.As(err, new(*DeleteKeyError)) {
+// 				err = t.Borrow(currentPageAddr, i)
+// 				if err != nil {
+// 					if err == syscall.EINVAL {
+// 						err = t.Merge()
+// 						if err != nil {
+// 							return fmt.Errorf("tree: Delete error:%w", err)
+// 						}
+// 					}
+// 					return fmt.Errorf("tree: Delete error:%w", err)
+// 				}
+// 				return nil
+// 			}
+// 			if err != nil {
+// 				return fmt.Errorf("tree: Delete Error:%w", err)
+// 			}
+// 			return nil
+// 		}
+// 		if currentPage.Data[i].Key == key {
+// 			err = t.DeleteNode(currentPage, key)
+// 			if err != nil {
+// 				return fmt.Errorf("tree: Delete Error:%w", err)
+// 			}
+// 			return nil
+// 		}
+// 		if currentPage.Data[i].Key > key {
+// 			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
+// 				return fmt.Errorf("tree: Delete Error: key %d not found", key)
+// 			}
+// 			t.table.Cursor = currentPage.Chld[i]
+// 			err = t.Delete(key)
+// 			if errors.As(err, new(*DeleteKeyError)) {
+// 				// If we get a DeleteKeyError, it means we need to demote a key from the child node
+// 				err = t.Borrow(currentPageAddr, i)
+// 				if err != nil {
+// 					if err == syscall.EINVAL {
+// 						err = t.Merge()
+// 						if err != nil {
+// 							return fmt.Errorf("tree: Delete Error:%w", err)
+// 						}
+// 					}
+// 					return fmt.Errorf("tree: Delete Error:%w", err)
+// 				}
+// 			} else if err != nil {
+// 				return fmt.Errorf("tree: Delete Error:%w", err)
+// 			}
+// 			return nil
+// 		}
+// 	}
+// 	numValidKeysInNode := 0
+// 	for _, v_key := range currentPage.Data {
+// 		if IsNodeEmpty(v_key) {
+// 			break
+// 		}
+// 		numValidKeysInNode++
+// 	}
+// 	if currentPage.Chld[numValidKeysInNode] == 0 || currentPage.Chld[numValidKeysInNode] == -1 {
+// 		return fmt.Errorf("tree: Delete Error: key %d not found (no rightmost child path)", key)
+// 	}
+// 	t.table.Cursor = currentPage.Chld[numValidKeysInNode]
+// 	err = t.Delete(key)
+// 	if errors.As(err, new(*DeleteKeyError)) {
+// 		// If we get a DeleteKeyError, it means we need to demote a key from the child node
+// 		err = t.Borrow(currentPageAddr, numValidKeysInNode)
+// 		if err != nil {
+// 			if err == syscall.EINVAL {
+// 				err = t.Merge()
+// 				if err != nil {
+// 					return fmt.Errorf("tree: Delete Error:%w", err)
+// 				}
+// 			}
+// 			return fmt.Errorf("tree: Delete Error:%w", err)
+// 		}
+// 	} else if err != nil {
+// 		return fmt.Errorf("tree: Delete Error:%w", err)
+// 	}
+// 	return nil
+// }
 
 func (t tree) Delete(key int32) error {
-
-	// if table is empty
-	if t.table.SrtOff == t.table.EndOff {
-		return fmt.Errorf("tree: Delete Error: table is empty")
-	}
-	// if table is not empty, we need to select all from the tree
-	dsk, err := t.table.GetDiskData()
-	if err != nil {
-		return fmt.Errorf("tree: Delete Error:%w", err)
-	}
-	currentPage := dsk.RecData.(TreePage)
-	currentPageAddr := dsk.RecHead.RecAddr
-	if currentPage.Head.IsLeaf {
-		for _, v := range currentPage.Data {
-			if IsNodeEmpty(v) {
-				break
-			}
-			if v.Key == key {
-				err = t.DeleteLeafNode(currentPage, key)
-				if err != nil {
-					return fmt.Errorf("tree: Delete Error:%w", err)
-				}
-				return nil
-			}
-		}
-		return fmt.Errorf("tree: Delete Error: key %d not found", key)
-	}
-	for i := 0; i < MAX_KEYS; i++ {
-		if IsNodeEmpty(currentPage.Data[i]) {
-			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
-				return fmt.Errorf("tree: Update Error: key %d not found", key)
-			}
-			t.table.Cursor = currentPage.Chld[i]
-			err = t.Delete(key)
-			if errors.As(err, new(*DeleteKeyError)) {
-				err = t.Borrow(currentPageAddr, i)
-				if err != nil {
-					if err == syscall.EINVAL {
-						err = t.Merge()
-						if err != nil {
-							return fmt.Errorf("tree: Delete error:%w", err)
-						}
-					}
-					return fmt.Errorf("tree: Delete error:%w", err)
-				}
-				return nil
-			}
-			if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			return nil
-		}
-		if currentPage.Data[i].Key == key {
-			err = t.DeleteNode(currentPage, key)
-			if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			return nil
-		}
-		if currentPage.Data[i].Key > key {
-			if currentPage.Chld[i] == -1 || currentPage.Chld[i] == 0 {
-				return fmt.Errorf("tree: Delete Error: key %d not found", key)
-			}
-			t.table.Cursor = currentPage.Chld[i]
-			err = t.Delete(key)
-			if errors.As(err, new(*DeleteKeyError)) {
-				// If we get a DeleteKeyError, it means we need to demote a key from the child node
-				err = t.Borrow(currentPageAddr, i)
-				if err != nil {
-					if err == syscall.EINVAL {
-						err = t.Merge()
-						if err != nil {
-							return fmt.Errorf("tree: Delete Error:%w", err)
-						}
-					}
-					return fmt.Errorf("tree: Delete Error:%w", err)
-				}
-			} else if err != nil {
-				return fmt.Errorf("tree: Delete Error:%w", err)
-			}
-			return nil
-		}
-	}
-	numValidKeysInNode := 0
-	for _, v_key := range currentPage.Data {
-		if IsNodeEmpty(v_key) {
-			break
-		}
-		numValidKeysInNode++
-	}
-	if currentPage.Chld[numValidKeysInNode] == 0 || currentPage.Chld[numValidKeysInNode] == -1 {
-		return fmt.Errorf("tree: Delete Error: key %d not found (no rightmost child path)", key)
-	}
-	t.table.Cursor = currentPage.Chld[numValidKeysInNode]
-	err = t.Delete(key)
-	if errors.As(err, new(*DeleteKeyError)) {
-		// If we get a DeleteKeyError, it means we need to demote a key from the child node
-		err = t.Borrow(currentPageAddr, numValidKeysInNode)
-		if err != nil {
-			if err == syscall.EINVAL {
-				err = t.Merge()
-				if err != nil {
-					return fmt.Errorf("tree: Delete Error:%w", err)
-				}
-			}
-			return fmt.Errorf("tree: Delete Error:%w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("tree: Delete Error:%w", err)
-	}
-	return nil
+	return fmt.Errorf("tree:delete not implemented")
 }
 
 func (t tree) Update(key int32, val string) error {
