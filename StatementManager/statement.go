@@ -1,4 +1,4 @@
-package main
+package statement
 
 import (
 	diskmanager "db/DiskManager"
@@ -100,7 +100,7 @@ func (s *Statement) PrepareStatement(inpBuf string) error {
 		if err != nil {
 			return fmt.Errorf("statement error: invalid key provided %w", err)
 		}
-		if len(args[2]) > 32 {
+		if len(args[2]) >= 32 {
 			return fmt.Errorf("statement error: string length cannot exceed 32 got %d", len(args[2]))
 		}
 		s.Inp = KV{
@@ -127,7 +127,7 @@ func (s *Statement) PrepareStatement(inpBuf string) error {
 		if len(args) != 3 {
 			return fmt.Errorf("statement error: syntax error\n ussage: create dbname tabletype")
 		}
-		if len(args[1]) < 32 {
+		if len(args[1]) >= 32 {
 			return fmt.Errorf("statement error: database name length should not exceed 32")
 		}
 		allowedDBType := []string{"tree", "list"}
@@ -145,12 +145,12 @@ func (s *Statement) PrepareStatement(inpBuf string) error {
 			return fmt.Errorf("statement error: invalid tree type allowed db table types are %v", allowedDBType)
 		}
 	case "dropdb":
-		s.Cmd = STATEMENT_DB_CREATE
+		s.Cmd = STATEMENT_DB_DROPDB
 		args := strings.Split(inpBuf, " ")
 		if len(args) != 2 {
 			return fmt.Errorf("statement error: syntax error\n ussage: dropdb dbname")
 		}
-		if len(args[1]) < 32 {
+		if len(args[1]) >= 32 {
 			return fmt.Errorf("statement error: database name length should not exceed 32")
 		}
 		s.Inp = DBInfo{
@@ -162,7 +162,7 @@ func (s *Statement) PrepareStatement(inpBuf string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("statement error: syntax error\n ussage: drop dbname")
 		}
-		if len(args[1]) < 32 {
+		if len(args[1]) >= 32 {
 			return fmt.Errorf("statement error: database name length should not exceed 32")
 		}
 		s.Inp = DBInfo{
@@ -175,8 +175,14 @@ func (s *Statement) PrepareStatement(inpBuf string) error {
 }
 
 func (e *ExecutionInfo) ExecuteStatement() error {
+	if e == nil {
+		return fmt.Errorf("execute error: nil execution info error")
+	}
 	switch e.StatementDetails.Cmd {
 	case STATEMENT_DB_INSERT:
+		if e.TableDetails == nil {
+			return fmt.Errorf("execute error: nil table, select table")
+		}
 		kv := e.StatementDetails.Inp.(KV)
 		err := e.TableDetails.Insert(kv.Key, kv.Val)
 		if err != nil {
@@ -184,12 +190,19 @@ func (e *ExecutionInfo) ExecuteStatement() error {
 		}
 		fmt.Println("execute success: insert")
 	case STATEMENT_DB_SELECT:
+		if e.TableDetails == nil {
+			return fmt.Errorf("execute error: nil table, select table")
+		}
 		inp, ok := e.StatementDetails.Inp.(KV)
 		if !ok {
+			if e.StatementDetails.Inp.(string) != "all" {
+				return fmt.Errorf("execute error: invalid select input %v", e.StatementDetails.Inp)
+			}
 			err := e.TableDetails.SelectAll()
 			if err != nil {
 				return fmt.Errorf("execute error:%w", err)
 			}
+			return nil
 		}
 		val, err := e.TableDetails.Select(inp.Key)
 		if err != nil {
@@ -197,6 +210,9 @@ func (e *ExecutionInfo) ExecuteStatement() error {
 		}
 		fmt.Printf("output- Key:%d Value:%s\n", inp.Key, val)
 	case STATEMENT_DB_UPDATE:
+		if e.TableDetails == nil {
+			return fmt.Errorf("execute error: nil table, select table")
+		}
 		kv := e.StatementDetails.Inp.(KV)
 		err := e.TableDetails.Update(kv.Key, kv.Val)
 		if err != nil {
@@ -204,6 +220,9 @@ func (e *ExecutionInfo) ExecuteStatement() error {
 		}
 		fmt.Println("execute success: update")
 	case STATEMENT_DB_DELETE:
+		if e.TableDetails == nil {
+			return fmt.Errorf("execute error: nil table, select table")
+		}
 		kv := e.StatementDetails.Inp.(KV)
 		err := e.TableDetails.Delete(kv.Key)
 		if err != nil {
@@ -226,7 +245,11 @@ func (e *ExecutionInfo) ExecuteStatement() error {
 		e.TableDetails = diskmanager.InitTable(dsk)
 		fmt.Println("execute success: switched to database: ", info.Name)
 	case STATEMENT_DB_DROPDB:
-		return fmt.Errorf("execute error: db drop not implemented")
+		info := e.StatementDetails.Inp.(DBInfo)
+		err := diskmanager.DropDatabase(info.Name)
+		if err != nil {
+			return fmt.Errorf("execution error: %w", err)
+		}
 	default:
 		return fmt.Errorf("unrecognised command")
 	}

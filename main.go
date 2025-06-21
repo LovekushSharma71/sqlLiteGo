@@ -1,209 +1,75 @@
 package main
 
 import (
-	diskmanager "db/DiskManager"
+	"bufio"
+	statement "db/StatementManager"
 	"fmt"
+	"os"
+	"strings"
 )
+
+type InpInfo struct {
+	dbname string
+	cmdStr string
+}
+
+func (i *InpInfo) printPrompt() {
+	if i == nil {
+		fmt.Printf("db>")
+		return
+	}
+	fmt.Printf("db:%s>", i.dbname)
+}
+
+func (i *InpInfo) readInput() {
+
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("Error reading Input: ", err)
+		os.Exit(1)
+	}
+	input = strings.TrimSpace(input)
+	i.cmdStr = input
+}
 
 func main() {
 
-	fmt.Println(diskmanager.CreateDatabase("test", "tree"))
-	d, err := diskmanager.InitDatabase("test")
-	if err != nil {
-		panic(err)
+	inpInfo := &InpInfo{}
+	e := &statement.ExecutionInfo{}
+	for {
+		inpInfo.printPrompt()
+		inpInfo.readInput()
+
+		if inpInfo.cmdStr == "" {
+			continue
+		}
+
+		if inpInfo.cmdStr[0] == '.' {
+			err := statement.DoMetaCommand(inpInfo.cmdStr)
+			if err != nil {
+				fmt.Println(err.Error())
+				continue
+			}
+		}
+
+		s := &statement.Statement{}
+		err := s.PrepareStatement(inpInfo.cmdStr)
+		if err != nil {
+			fmt.Println(err.Error())
+			continue
+		}
+
+		e.StatementDetails = *s
+		err = e.ExecuteStatement()
+		if err != nil {
+			fmt.Println(err.Error())
+			continue
+		}
+		if s.Cmd == statement.STATEMENT_DB_SWITCH {
+			inpInfo.dbname = s.Inp.(statement.DBInfo).Name
+		} else if s.Cmd == statement.STATEMENT_DB_DROPDB {
+			inpInfo = &InpInfo{}
+		}
 	}
-	t := diskmanager.InitTable(d)
-	// t, err := diskmanager.InitDiskManager("test")
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// Insert values in a loop
-	for i := 1; i <= 7; i++ {
-		fmt.Println(t.ResetCursor())
-		fmt.Printf("err:%+v\n", t.Insert(int32(i), fmt.Sprintf("val%d", i)))
-	}
-
-	// Select all records
-	fmt.Println(t.ResetCursor())
-	fmt.Printf("err:%+v\n", t.SelectAll())
-
-	// Updating values (if needed, uncomment)
-	for i := 1; i <= 7; i++ {
-		fmt.Println(t.ResetCursor())
-		fmt.Printf("err:%+v\n", t.Update(int32(i), fmt.Sprintf("value%d", i)))
-	}
-
-	// Selecting individual values in a loop
-	for i := 1; i <= 7; i++ {
-		fmt.Println(t.ResetCursor())
-		fmt.Println(t.Select(int32(i)))
-	}
-	// fmt.Printf("err:%+v\n", t.Insert(1, "val1"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(2, "val2"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(3, "val3"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(4, "val4"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(5, "val5"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(6, "val6"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(7, "val7"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(8, "val8"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(9, "val9"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(10, "val10"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(11, "val11"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(12, "val12"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(13, "val13"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.Insert(14, "val14"))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Printf("err:%+v\n", t.SelectAll())
-	// fmt.Printf("err:%+v\n", t.Update(1, "value1"))
-	// fmt.Printf("err:%+v\n", t.Update(2, "value2"))
-	// fmt.Printf("err:%+v\n", t.Update(3, "value3"))
-	// fmt.Printf("err:%+v\n", t.Update(4, "value4"))
-	// fmt.Printf("err:%+v\n", t.Update(5, "value5"))
-	// fmt.Printf("err:%+v\n", t.Update(6, "value6"))
-	// fmt.Printf("err:%+v\n", t.SelectAll())
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(1))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(2))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(3))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(4))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(5))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(6))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(7))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(8))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(9))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(10))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(11))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(12))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(13))
-	// fmt.Println(t.ResetCursor())
-	// fmt.Println(t.Select(14))
-	// fmt.Printf("err:%+v\n", t.Delete(3))
-	// fmt.Printf("err:%+v\n", t.Delete(2))
-	// fmt.Printf("err:%+v\n", t.Delete(1))
-	// fmt.Printf("err:%+v\n", t.SelectAll())
-
 }
-
-// import (
-// 	"bufio"
-// 	"fmt"
-// 	"os"
-// 	"strings"
-// )
-
-// type InputBuffer struct {
-// 	inputString string
-// 	inputLenght int
-// }
-
-// func initInpBuff() *InputBuffer {
-
-// 	inpBuff := &InputBuffer{}
-// 	inpBuff.inputString = ""
-// 	inpBuff.inputLenght = 0
-
-// 	return inpBuff
-
-// }
-
-// func printPrompt() {
-// 	fmt.Printf("db > ")
-// }
-
-// func (inp *InputBuffer) readInput() {
-
-// 	reader := bufio.NewReader(os.Stdin)
-// 	input, err := reader.ReadString('\n')
-// 	if err != nil {
-// 		fmt.Println("Error reading Input: ", err)
-// 		os.Exit(1)
-// 	}
-// 	input = strings.TrimSpace(input)
-// 	inp.inputString = input
-// 	inp.inputLenght = len(input)
-// }
-
-// func main() {
-// 	var inputBuff *InputBuffer = initInpBuff()
-// 	var table *Table = NewTable()
-// 	err := table.SyncFile2Table()
-// 	if err != nil {
-// 		os.Exit(0)
-// 	}
-// 	for {
-// 		printPrompt()
-// 		inputBuff.readInput()
-
-// 		if inputBuff.inputString[0] == '.' {
-// 			switch DoMetaCommand(inputBuff.inputString, table) {
-// 			case META_COMMAND_SUCCESS:
-// 				continue
-// 			case META_COMMAND_UNRECOGNIZED_COMMAND:
-// 				fmt.Printf("Unrecognized command '%s'.\n", inputBuff.inputString)
-// 				continue
-// 			}
-// 		}
-
-// 		statement := &Statement{}
-// 		switch statement.PrepareStatement(*inputBuff) {
-// 		case PREPARE_SUCCESS:
-// 			// fmt.Println("prepare success")
-// 		case PREPARE_SYNTAX_ERROR:
-// 			fmt.Println("Syntax error: Could not parse statement")
-// 			continue
-// 		case PREPARE_UNRECOGNIZED_STATEMENT:
-// 			fmt.Println("Invalid statement")
-// 			continue
-// 		}
-// 		switch statement.ExecuteStatement(table) {
-// 		case EXECUTE_SUCCESS:
-// 			fmt.Println("Executed")
-// 		case EXECUTE_TABLE_FULL:
-// 			fmt.Println("Error: Table full")
-// 		case EXECUTE_INVALID_STATEMENT:
-// 			fmt.Println("Error: Invalid statement")
-// 		}
-// 	}
-// }
-
-// func main() {
-
-// dsk, err := dm.InitDiskManager("test")
-// if err != nil {
-// 	panic(err)
-// }
-// defer dsk.Close()
-
-// t.Insert(1, "val1")
-// t.Select()
-
-// t.Insert(2, "val2")
-// t.Select()
-
-// }

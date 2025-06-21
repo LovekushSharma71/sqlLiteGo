@@ -52,6 +52,17 @@ func CreateDatabase(dbname string, dbtype string) error {
 	return nil
 }
 
+func DropDatabase(dbname string) error {
+
+	dbFile := DB_FOLDER + "/" + dbname
+	err := os.Remove(dbFile)
+	if err != nil {
+		return fmt.Errorf("dropdb error: deleting file '%w': %s", err, dbname)
+
+	}
+	return nil
+}
+
 func InitDatabase(dbname string) (*DiskManager, error) {
 
 	dbFile := DB_FOLDER + "/" + dbname
