@@ -178,6 +178,13 @@ func (e *ExecutionInfo) ExecuteStatement() error {
 	if e == nil {
 		return fmt.Errorf("execute error: nil execution info error")
 	}
+	defer func() error {
+		err := e.TableDetails.ResetCursor()
+		if err != nil {
+			return err
+		}
+		return nil
+	}()
 	switch e.StatementDetails.Cmd {
 	case STATEMENT_DB_INSERT:
 		if e.TableDetails == nil {
